@@ -1,0 +1,27 @@
+# Python Virtual Environment & Cache
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment Variables & Secrets (CRITICAL: Never commit these)
+.env
+.env.local
+.secret.key
+*.pem
+*.key
+
+# Local SQLite Database & Storage
+*.db
+*.sqlite
+*.sqlite3
+local_seo.db
+exports/
+*.pdf
+*.xlsx
+*.csv

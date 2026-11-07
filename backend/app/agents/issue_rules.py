@@ -1,0 +1,277 @@
+from typing import List, Dict, Any, Optional
+from collections import defaultdict
+import difflib
+from urllib.parse import urlparse
+
+def find_closest_slug(target_url: str, valid_urls: List[str]) -> Optional[str]:
+    """Finds the closest existing crawled 200 URL for a broken 4xx URL using slug similarity."""
+    t_parsed = urlparse(target_url)
+    t_path = t_parsed.path.strip("/")
+    if not t_path:
+        return None
+    t_slug = t_path.split("/")[-1].lower()
+    t_slug_clean = t_slug.replace("-", "").replace("_", "")
+
+    best_url = None
+    best_score = 0.0
+
+    for u in valid_urls:
+        u_parsed = urlparse(u)
+        u_path = u_parsed.path.strip("/")
+        if not u_path:
+            continue
+        u_slug = u_path.split("/")[-1].lower()
+        u_slug_clean = u_slug.replace("-", "").replace("_", "")
+
+        score_clean = difflib.SequenceMatcher(None, t_slug_clean, u_slug_clean).ratio()
+        score_raw = difflib.SequenceMatcher(None, t_slug, u_slug).ratio()
+        score = max(score_clean, score_raw)
+        if t_slug_clean == u_slug_clean:
+            score = 1.0
+
+        if score > best_score:
+            best_score = score
+            best_url = u_parsed.path or "/"
+
+    if best_url and best_score >= 0.55:
+        return best_url
+    return None
+
+def detect_issues_from_data(
+    crawl_pages: List[Dict[str, Any]],
+    crawl_links: List[Dict[str, Any]],
+    psi_results: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Deterministic, rule-based SEO issue detector (Plain Python, No LLM)."""
+    candidates: List[Dict[str, Any]] = []
+
+    # Map inlinks count
+    inlink_map: Dict[str, int] = defaultdict(int)
+    for link in crawl_links:
+        target = link.get("target_url", "").rstrip("/")
+        inlink_map[target] += 1
+
+    # Group pages by title and meta_description for duplicates
+    title_to_pages: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    meta_to_pages: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
+    # Collect all 200 OK URLs for closest slug matching
+    pages_200_urls = [p.get("url") for p in crawl_pages if p.get("status_code") == 200 and p.get("url")]
+
+    # 1. Crawl Page Rules
+    for page in crawl_pages:
+        pid = page.get("id")
+        url = page.get("url")
+        status = page.get("status_code", 0)
+        title = page.get("title")
+        meta_desc = page.get("meta_desc")
+        h1 = page.get("h1")
+        canonical = page.get("canonical")
+        indexable = page.get("indexable", True)
+        index_status = page.get("indexability_status", "indexable")
+
+        # Broken links (4xx) and Server errors (5xx)
+        if 400 <= status < 500:
+            closest = find_closest_slug(url, pages_200_urls) if url else None
+            cand = {
+                "type": "broken_link_4xx",
+                "urls": [url],
+                "evidence": [{"table": "crawl_pages", "id": pid, "field": "status_code", "value": status}],
+            }
+            if closest:
+                cand["did_you_mean"] = closest
+            candidates.append(cand)
+        elif status >= 500:
+            candidates.append({
+                "type": "server_error_5xx",
+                "urls": [url],
+                "evidence": [{"table": "crawl_pages", "id": pid, "field": "status_code", "value": status}],
+            })
+
+        # Redirect chain / status
+        if 300 <= status < 400:
+            candidates.append({
+                "type": "redirect_chain",
+                "urls": [url],
+                "evidence": [{"table": "crawl_pages", "id": pid, "field": "status_code", "value": status}],
+            })
+
+        # CRITICAL RULE: On-page checks ONLY run for 200 OK pages!
+        if status == 200:
+            # Missing Title
+            if not title or len(title.strip()) == 0:
+                candidates.append({
+                    "type": "missing_title",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "title", "value": None}],
+                })
+            else:
+                title_len = len(title.strip())
+                if 61 <= title_len <= 65:
+                    candidates.append({
+                        "type": "title_borderline",
+                        "urls": [url],
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "title", "value": title}],
+                    })
+                elif title_len > 65:
+                    candidates.append({
+                        "type": "title_too_long",
+                        "urls": [url],
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "title", "value": title}],
+                    })
+                elif title_len < 30:
+                    candidates.append({
+                        "type": "title_too_short",
+                        "urls": [url],
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "title", "value": title}],
+                    })
+                title_to_pages[title.strip().lower()].append(page)
+
+            # Missing Meta Description
+            if not meta_desc or len(meta_desc.strip()) == 0:
+                candidates.append({
+                    "type": "missing_meta_description",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": None}],
+                })
+            else:
+                meta_len = len(meta_desc.strip())
+                if 161 <= meta_len <= 170:
+                    candidates.append({
+                        "type": "meta_borderline",
+                        "urls": [url],
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": meta_desc}],
+                    })
+                elif meta_len > 170:
+                    candidates.append({
+                        "type": "meta_too_long",
+                        "urls": [url],
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": meta_desc}],
+                    })
+                meta_to_pages[meta_desc.strip().lower()].append(page)
+
+            # Missing H1
+            if not h1 or len(h1.strip()) == 0:
+                candidates.append({
+                    "type": "missing_h1",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "h1", "value": None}],
+                })
+
+            # Canonical checks
+            if not canonical:
+                candidates.append({
+                    "type": "missing_canonical",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "canonical", "value": None}],
+                })
+            elif index_status == "canonical_to_other":
+                candidates.append({
+                    "type": "canonical_to_other",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "canonical", "value": canonical}],
+                })
+
+            # Noindex page
+            if index_status in ("noindex_meta", "noindex_header"):
+                candidates.append({
+                    "type": "noindex_page",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "indexability_status", "value": index_status}],
+                })
+
+            # Orphan page (crawled with 0 inlinks, excluding target start page if needed)
+            norm_url = url.rstrip("/")
+            if inlink_map.get(norm_url, 0) == 0 and page.get("inlinks_count", 0) == 0:
+                candidates.append({
+                    "type": "orphan_page",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "inlinks_count", "value": 0}],
+                })
+
+    # Canonical Mass-Misconfiguration Rule
+    total_200_pages = [p for p in crawl_pages if p.get("status_code") == 200]
+    canonical_mismatch_groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    all_mismatched = []
+
+    for p in total_200_pages:
+        c_val = p.get("canonical")
+        u_val = p.get("url", "")
+        if c_val and c_val.rstrip("/") != u_val.rstrip("/"):
+            target_norm = c_val.rstrip("/")
+            canonical_mismatch_groups[target_norm].append(p)
+            all_mismatched.append(p)
+
+    if total_200_pages and (len(all_mismatched) / len(total_200_pages)) >= 0.30:
+        # Find dominant target
+        if canonical_mismatch_groups:
+            dominant_target, dom_pages = max(canonical_mismatch_groups.items(), key=lambda x: len(x[1]))
+            if len(dom_pages) / len(all_mismatched) >= 0.50:
+                candidates.append({
+                    "type": "canonical_mass_misconfiguration",
+                    "urls": [p["url"] for p in dom_pages],
+                    "target_url": dominant_target,
+                    "target_canonical": dominant_target,
+                    "evidence": [{"table": "crawl_pages", "id": p["id"], "field": "canonical", "value": p.get("canonical")} for p in dom_pages],
+                })
+
+    # Duplicate Titles
+    for t_text, plist in title_to_pages.items():
+        if len(plist) > 1:
+            candidates.append({
+                "type": "duplicate_title",
+                "urls": [p["url"] for p in plist],
+                "evidence": [{"table": "crawl_pages", "id": p["id"], "field": "title", "value": p.get("title")} for p in plist],
+            })
+
+    # Duplicate Meta Descriptions
+    for m_text, plist in meta_to_pages.items():
+        if len(plist) > 1:
+            candidates.append({
+                "type": "duplicate_meta_description",
+                "urls": [p["url"] for p in plist],
+                "evidence": [{"table": "crawl_pages", "id": p["id"], "field": "meta_desc", "value": p.get("meta_desc")} for p in plist],
+            })
+
+    # 2. PageSpeed Insights Rules
+    speed_issues_found = False
+    for psi in psi_results:
+        psi_id = psi.get("id")
+        p_url = psi.get("url")
+        score = psi.get("performance_score")
+        lcp = psi.get("lcp_ms")
+        cls_val = psi.get("cls")
+
+        if score is not None and score < 50:
+            speed_issues_found = True
+            candidates.append({
+                "type": "low_performance_score",
+                "urls": [p_url],
+                "evidence": [{"table": "psi_results", "id": psi_id, "field": "performance_score", "value": score}],
+            })
+
+        if lcp is not None and lcp > 2500:
+            speed_issues_found = True
+            candidates.append({
+                "type": "slow_lcp",
+                "urls": [p_url],
+                "evidence": [{"table": "psi_results", "id": psi_id, "field": "lcp_ms", "value": lcp}],
+            })
+
+        if cls_val is not None and cls_val > 0.1:
+            speed_issues_found = True
+            candidates.append({
+                "type": "poor_cls",
+                "urls": [p_url],
+                "evidence": [{"table": "psi_results", "id": psi_id, "field": "cls", "value": cls_val}],
+            })
+
+    if psi_results and not speed_issues_found:
+        print("PSI ran, no speed issues found")
+
+    # Assign stable candidate IDs (C-001, C-002, ...)
+    for idx, c in enumerate(candidates, start=1):
+        if "id" not in c:
+            c["id"] = f"C-{idx:03d}"
+
+    return candidates
