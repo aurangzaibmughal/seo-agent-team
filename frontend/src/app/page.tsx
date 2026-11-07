@@ -250,7 +250,9 @@ interface Job {
   is_demo?: number;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ||
+  "https://seo-agent-team-ac15f.containers.snapdeploy.app";
 
 const PIPELINE_STEPS = [
   { key: "crawling", label: "Crawl" },
