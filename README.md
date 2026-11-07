@@ -15,6 +15,23 @@ An autonomous, multi-agent SEO engineering platform built according to [PLAN.md]
 
 ---
 
+## 🚀 Deploy Frontend to Vercel
+
+Deploy the Next.js frontend directly to Vercel with 1-click:
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Faurangzaibmughal%2Fseo-agent-team&root-directory=frontend)
+
+### Vercel Dashboard Import Steps:
+1. Open [Vercel New Project](https://vercel.com/new).
+2. Select your repository: **`aurangzaibmughal/seo-agent-team`**.
+3. Under **Root Directory**, click **Edit** and select **`frontend`**.
+4. Framework Preset will automatically detect **Next.js**.
+5. (Optional) Set Environment Variable:
+   - `NEXT_PUBLIC_API_URL`: URL of your hosted backend worker (e.g. on Railway/Render).
+6. Click **Deploy**.
+
+---
+
 ## Project Structure
 
 ```text
