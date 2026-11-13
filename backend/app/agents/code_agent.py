@@ -482,7 +482,19 @@ class CodeGeneratorAgent:
             ))
 
         elif platform == "wordpress":
-            # 1. functions.php wp_head hook
+            # 1. FIX-INSTRUCTIONS.md
+            wp_instructions = CodeTemplateEngine.render_wordpress_instructions(is_demo=is_demo)
+            artifacts.append(GeneratedArtifact(
+                artifact_type="wordpress_instructions",
+                file_path="FIX-INSTRUCTIONS.md",
+                platform="wordpress",
+                title="WordPress SEO Implementation Guide",
+                content=wp_instructions,
+                source_issue_ids=[],
+                source_task_ids=[]
+            ))
+
+            # 2. functions.php wp_head hook
             wp_functions = CodeTemplateEngine.render_wordpress_functions_php(org_schema, is_demo=is_demo)
             artifacts.append(GeneratedArtifact(
                 artifact_type="wordpress_functions_php",
@@ -494,7 +506,7 @@ class CodeGeneratorAgent:
                 source_task_ids=schema_t_ids
             ))
 
-            # 2. .htaccess redirects
+            # 3. .htaccess redirects
             if redirect_pairs:
                 wp_htaccess = CodeTemplateEngine.render_wordpress_htaccess(redirect_pairs, is_demo=is_demo)
                 artifacts.append(GeneratedArtifact(

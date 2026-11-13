@@ -11,6 +11,8 @@ class PlatformDetector:
         self.wordpress_signals = 0
         self.shopify_signals = 0
         self.total_pages_analyzed = 0
+        self.evidence: list[str] = []
+        self.detected_subframework: Optional[str] = None
 
     def analyze_page(self, url: str, status_code: int, headers: Dict[str, str], html: str):
         """Analyzes headers and HTML of a crawled page for framework signatures."""
@@ -25,26 +27,47 @@ class PlatformDetector:
         x_powered_by = headers_lower.get("x-powered-by", "")
         if "next.js" in x_powered_by or "nextjs" in x_powered_by:
             self.nextjs_signals += 5
+            self.evidence.append(f"Header x-powered-by: {x_powered_by}")
         if "__next_data__" in html_lower or "self.__next_f" in html_lower:
             self.nextjs_signals += 4
+            self.evidence.append("Next.js hydration payload (__NEXT_DATA__ / __next_f)")
         if "/_next/" in html_lower or "/_next/static/" in html_lower:
             self.nextjs_signals += 3
+            self.evidence.append("Next.js asset paths (/_next/static/)")
 
-        # 2. WordPress detection
+        # 2. WordPress & Elementor detection
         if "wordpress" in x_powered_by:
             self.wordpress_signals += 5
-        if re.search(r'<meta[^>]+name=["\']generator["\'][^>]+content=["\'][^"\']*wordpress', html_lower):
+            self.evidence.append(f"Header x-powered-by: {x_powered_by}")
+        wp_gen_match = re.search(r'<meta[^>]+name=["\']generator["\'][^>]+content=["\']([^"\']*wordpress[^"\']*)["\']', html_lower)
+        if wp_gen_match:
             self.wordpress_signals += 5
+            self.evidence.append(f"Meta generator WordPress: {wp_gen_match.group(1)}")
         if "/wp-content/" in html_lower or "/wp-includes/" in html_lower:
             self.wordpress_signals += 3
+            self.evidence.append("WordPress asset paths (/wp-content/ or /wp-includes/)")
         if "/wp-json/" in html_lower or "wp-json" in headers_lower.get("link", ""):
             self.wordpress_signals += 2
+            self.evidence.append("WordPress REST API link (/wp-json/)")
+
+        # Elementor subframework detection
+        elem_gen_match = re.search(r'<meta[^>]+name=["\']generator["\'][^>]+content=["\']([^"\']*elementor[^"\']*)["\']', html_lower)
+        if elem_gen_match:
+            self.wordpress_signals += 5
+            self.detected_subframework = "elementor"
+            self.evidence.append(f"Meta generator Elementor: {elem_gen_match.group(1)}")
+        if "/wp-content/plugins/elementor" in html_lower or "elementor-frontend-js" in html_lower or "elementor-kit-" in html_lower:
+            self.wordpress_signals += 3
+            self.detected_subframework = "elementor"
+            self.evidence.append("Elementor plugin assets and CSS class markers")
 
         # 3. Shopify detection
         if "cdn.shopify.com" in html_lower or "shopify.theme" in html_lower:
             self.shopify_signals += 5
+            self.evidence.append("Shopify CDN assets (cdn.shopify.com)")
         if "myshopify.com" in html_lower or "x-shopid" in headers_lower:
             self.shopify_signals += 4
+            self.evidence.append("Shopify store domain / x-shopid header")
 
     def detect(self) -> Tuple[str, float]:
         """Returns (detected_platform, confidence)."""

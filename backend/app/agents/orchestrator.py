@@ -529,7 +529,9 @@ async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, projec
         try:
             # Re-fetch latest job to check for detected platform or user override
             job = DBManager.get_job(job_id) or job
-            platform = job.get("platform") or job.get("detected_platform") or "nextjs"
+            platform = job.get("platform") or job.get("detected_platform") or "plain_html"
+            if platform not in ("nextjs", "wordpress", "shopify", "plain_html"):
+                platform = "plain_html"
             platform_confidence = float(job.get("platform_confidence") or job.get("detected_platform_confidence") or 1.0)
             router_type = job.get("router_type") or "app"
 

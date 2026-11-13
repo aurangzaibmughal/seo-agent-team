@@ -510,15 +510,19 @@ class ReportExporter:
         # 6. Automated Code Fixes & Implementation Package (M5)
         story.append(Spacer(1, 10))
         story.append(Paragraph("6. Automated Code Fixes & Implementation Package", h2_style))
-        story.append(Paragraph("<i>Code fixes generated deterministically via Jinja2 templates. Download full bundle as ZIP via API/UI.</i>", meta_style))
 
         bundle = code_data.get("bundle", {}) if code_data else {}
         verifier = code_data.get("verifier", {}) if code_data else {}
         artifacts = bundle.get("artifacts", [])
         fix_coverage = bundle.get("fix_coverage", [])
-        platform = bundle.get("platform", "Next.js")
+        platform = bundle.get("platform", "plain_html")
 
-        story.append(Paragraph(f"<b>Target Platform:</b> {platform.upper()} | <b>Generated Files:</b> {len(artifacts)} | <b>ZIP Package:</b> seo-fixes-{job_id[:8]}.zip", body_style))
+        if len(artifacts) > 0:
+            story.append(Paragraph("<i>Code fixes generated deterministically via Jinja2 templates. Download full bundle as ZIP via API/UI.</i>", meta_style))
+            story.append(Paragraph(f"<b>Target Platform:</b> {platform.upper()} | <b>Generated Files:</b> {len(artifacts)} | <b>ZIP Package:</b> seo-fixes-{job_id[:8]}.zip", body_style))
+        else:
+            story.append(Paragraph("<i>No automated code fix bundle generated for this audit. Follow manual implementation instructions.</i>", meta_style))
+            story.append(Paragraph(f"<b>Target Platform:</b> {platform.upper()} | <b>Generated Files:</b> 0 (Manual implementation required)", body_style))
         story.append(Spacer(1, 6))
 
         # Fix Coverage Table
