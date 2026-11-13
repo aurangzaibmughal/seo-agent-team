@@ -22,6 +22,7 @@ class SitemapDiscoveryResult(BaseModel):
     sitemaps_discovered: List[str] = []
     status_codes: Dict[str, int] = {}
     error_reason: Optional[str] = None
+    robots_found: bool = False
     robots_has_sitemap: bool = False
 
 def parse_sitemap_xml(content: bytes, base_url: str, is_gz: bool = False) -> Tuple[List[str], List[str]]:
@@ -94,6 +95,7 @@ async def discover_and_parse_sitemaps(
             resp = await safe_fetch_url(client, robots_url, timeout=8.0)
             result.status_codes[robots_url] = resp.status_code
             if resp.status_code == 200:
+                result.robots_found = True
                 for line in resp.text.splitlines():
                     clean_line = line.strip()
                     if clean_line.lower().startswith("sitemap:"):

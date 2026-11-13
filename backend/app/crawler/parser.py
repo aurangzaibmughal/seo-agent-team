@@ -98,6 +98,67 @@ def parse_html_page(
     robots_content = (robots_tag.get("content", "") or "").lower() if robots_tag else ""
     is_meta_noindex = "noindex" in robots_content
 
+    # Structural elements before script/style tags are decomposed
+    has_schema = bool(
+        soup.find("script", attrs={"type": re.compile(r"application/ld\+json", re.I)}) or
+        soup.find(attrs={"itemscope": True})
+    )
+
+    has_og = bool(
+        soup.find("meta", attrs={"property": re.compile(r"^og:(title|description|image)", re.I)}) or
+        soup.find("meta", attrs={"name": re.compile(r"^og:(title|description|image)", re.I)})
+    )
+
+    has_twitter_card = bool(
+        soup.find("meta", attrs={"name": re.compile(r"^twitter:(card|title|description)", re.I)})
+    )
+
+    has_breadcrumbs = bool(
+        soup.find("nav", attrs={"aria-label": re.compile(r"breadcrumb", re.I)}) or
+        soup.find(attrs={"class": re.compile(r"breadcrumb", re.I)}) or
+        soup.find(attrs={"id": re.compile(r"breadcrumb", re.I)}) or
+        "breadcrumblist" in (soup.get_text() + str(soup.find_all("script"))).lower()
+    )
+
+    has_privacy_link = False
+    has_terms_link = False
+    for a_tag in soup.find_all("a"):
+        a_txt = a_tag.get_text(strip=True).lower()
+        if "privacy" in a_txt or "privacy-policy" in (a_tag.get("href") or "").lower():
+            has_privacy_link = True
+        if "terms" in a_txt or "terms-and-conditions" in (a_tag.get("href") or "").lower():
+            has_terms_link = True
+
+    images = soup.find_all("img")
+    images_missing_alt = [
+        img.get("src", "") for img in images
+        if not img.get("alt") or not img.get("alt", "").strip()
+    ]
+
+    images_missing_dimensions = [
+        img.get("src", "") for img in images
+        if not img.get("width") or not img.get("height")
+    ]
+
+    images_non_modern = [
+        img.get("src", "") for img in images
+        if any(img.get("src", "").lower().split("?")[0].endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".bmp"])
+    ]
+
+    videos = soup.find_all("video")
+    unmuted_autoplay_videos = [
+        v.get("src") or "video_element" for v in videos
+        if v.has_attr("autoplay") and not v.has_attr("muted")
+    ]
+
+    empty_legal_links = []
+    for a in soup.find_all("a"):
+        href = (a.get("href") or "").strip()
+        anchor_text = a.get_text(strip=True).lower()
+        if href in ("#", "", "javascript:void(0)", "javascript:;"):
+            if any(k in anchor_text for k in ["privacy", "terms", "condition", "policy", "disclaimer", "refund"]):
+                empty_legal_links.append({"text": a.get_text(strip=True), "href": href})
+
     # Word count and term extraction
     for tag in soup(["script", "style", "noscript", "svg", "head"]):
         tag.decompose()
@@ -161,6 +222,17 @@ def parse_html_page(
         "text_terms": text_terms,
         "body_text": body_text,
         "response_time_ms": response_time_ms,
+        "has_schema": has_schema,
+        "has_og": has_og,
+        "has_twitter_card": has_twitter_card,
+        "has_breadcrumbs": has_breadcrumbs,
+        "has_privacy_link": has_privacy_link,
+        "has_terms_link": has_terms_link,
+        "images_missing_alt": images_missing_alt,
+        "images_missing_dimensions": images_missing_dimensions,
+        "images_non_modern": images_non_modern,
+        "unmuted_autoplay_videos": unmuted_autoplay_videos,
+        "empty_legal_links": empty_legal_links,
     }
 
 def extract_page_data(html: str, current_url: str, status_code: int = 200, **kwargs) -> Dict[str, Any]:

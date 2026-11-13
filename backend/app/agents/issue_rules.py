@@ -92,6 +92,7 @@ def detect_issues_from_data(
     sitemap_entries: Optional[List[Dict[str, Any]]] = None,
     sitemap_urls: Optional[Any] = None,
     sitemap_status: Optional[str] = None,
+    robots_found: Optional[bool] = None,
 ) -> List[Dict[str, Any]]:
     """Deterministic, rule-based SEO issue detector (Plain Python, No LLM)."""
     candidates: List[Dict[str, Any]] = []
@@ -245,12 +246,167 @@ def detect_issues_from_data(
                     })
                 meta_to_pages[clean_meta_lower].append(page)
 
-            # Missing H1
+            # Missing H1 & Multiple H1
+            h1_list = page.get("h1_list") or ([h1] if h1 else [])
             if not h1 or len(h1.strip()) == 0:
                 candidates.append({
                     "type": "missing_h1",
                     "urls": [url],
                     "evidence": [{"table": "crawl_pages", "id": pid, "field": "h1", "value": None}],
+                })
+            elif len(h1_list) > 1:
+                candidates.append({
+                    "type": "multiple_h1",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "h1_list", "count": len(h1_list), "value": h1_list}],
+                })
+
+            # Image Alt attributes
+            missing_alts = page.get("images_missing_alt") or []
+            if missing_alts:
+                candidates.append({
+                    "type": "missing_image_alt",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "images_missing_alt", "count": len(missing_alts), "samples": missing_alts[:5]}],
+                })
+
+            # Autoplay video without mute
+            unmuted_vids = page.get("unmuted_autoplay_videos") or []
+            if unmuted_vids:
+                candidates.append({
+                    "type": "unmuted_autoplay_video",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "unmuted_autoplay_videos", "value": unmuted_vids}],
+                })
+
+            # Empty / hash links on legal or policy anchors
+            empty_links = page.get("empty_legal_links") or []
+            if empty_links:
+                candidates.append({
+                    "type": "broken_hash_link",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "empty_legal_links", "value": empty_links}],
+                })
+
+            # Schema.org structured data presence
+            if status == 200 and page.get("indexable") and not page.get("has_schema"):
+                candidates.append({
+                    "type": "missing_schema",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "has_schema", "value": False}],
+                })
+
+            # Image dimensions (causes Cumulative Layout Shift / CLS)
+            missing_dims = page.get("images_missing_dimensions") or []
+            if missing_dims:
+                candidates.append({
+                    "type": "missing_image_dimensions",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "images_missing_dimensions", "count": len(missing_dims), "samples": missing_dims[:5]}],
+                })
+
+            # Non-modern image formats (legacy PNG/JPG instead of WebP/AVIF)
+            legacy_imgs = page.get("images_non_modern") or []
+            if legacy_imgs:
+                candidates.append({
+                    "type": "non_modern_image_format",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "images_non_modern", "count": len(legacy_imgs), "samples": legacy_imgs[:5]}],
+                })
+
+            # Open Graph social tags
+            if status == 200 and page.get("indexable") and not page.get("has_og"):
+                candidates.append({
+                    "type": "missing_open_graph",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "has_og", "value": False}],
+                })
+
+            # Twitter Card meta tags
+            if status == 200 and page.get("indexable") and not page.get("has_twitter_card"):
+                candidates.append({
+                    "type": "missing_twitter_card",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "has_twitter_card", "value": False}],
+                })
+
+            # Breadcrumbs on subpages
+            path_depth = len([s for s in urlparse(url).path.strip("/").split("/") if s])
+            if status == 200 and page.get("indexable") and path_depth >= 1 and not page.get("has_breadcrumbs"):
+                candidates.append({
+                    "type": "missing_breadcrumbs",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "has_breadcrumbs", "value": False}],
+                })
+
+            # Legal / trust links
+            if status == 200 and not page.get("has_privacy_link") and not page.get("has_terms_link"):
+                candidates.append({
+                    "type": "missing_legal_pages",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "legal_links", "value": "No Privacy Policy or Terms links discovered"}],
+                })
+
+            # Noindex vs Canonical conflict
+            if index_status in ("noindex_meta", "noindex_header") and canonical:
+                candidates.append({
+                    "type": "noindex_canonical_conflict",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "noindex_canonical", "value": f"Page is noindex but declares canonical: {canonical}"}],
+                })
+
+            # Insecure HTTP URL (Redirect hygiene)
+            if url.startswith("http://"):
+                candidates.append({
+                    "type": "insecure_http_url",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "url", "value": "URL served over insecure HTTP protocol"}],
+                })
+
+            # Trailing slash redirect / canonical hygiene
+            if canonical and url:
+                u_p = urlparse(url)
+                c_p = urlparse(canonical)
+                if u_p.path and c_p.path and u_p.path != "/" and c_p.path != "/":
+                    if (u_p.path.endswith("/") != c_p.path.endswith("/")) and (u_p.path.rstrip("/") == c_p.path.rstrip("/")):
+                        candidates.append({
+                            "type": "trailing_slash_inconsistency",
+                            "urls": [url],
+                            "evidence": [{"table": "crawl_pages", "id": pid, "field": "canonical", "value": f"URL {url} and canonical {canonical} have mismatched trailing slash"}],
+                        })
+
+            # Content-QA Advisory checks (marked is_advisory=True)
+            TYPO_MAP = {
+                "kuala-kumpur": "kuala-lumpur",
+                "azerbajan": "azerbaijan",
+                "morroco": "morocco",
+                "landon": "london"
+            }
+            for typo, correction in TYPO_MAP.items():
+                if typo in url.lower():
+                    candidates.append({
+                        "type": "slug_typo",
+                        "urls": [url],
+                        "is_advisory": True,
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "url", "found": typo, "suggested": correction}],
+                    })
+
+            page_full_text = f"{title or ''} {h1 or ''} {page.get('body_text', '')}".lower()
+            for typo, correction in TYPO_MAP.items():
+                if re.search(r"\b" + re.escape(typo) + r"\b", page_full_text):
+                    candidates.append({
+                        "type": "content_typo",
+                        "urls": [url],
+                        "is_advisory": True,
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "body_text", "found": typo, "suggested": correction}],
+                    })
+
+            if "pkr $" in page_full_text or "$ pkr" in page_full_text or re.search(r"\$\s*\d+.*(?:pkr|rupee)", page_full_text):
+                candidates.append({
+                    "type": "currency_anomaly",
+                    "urls": [url],
+                    "is_advisory": True,
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "body_text", "value": "Conflicting currency symbols detected ($ with PKR)"}],
                 })
 
             # Canonical checks
@@ -324,7 +480,7 @@ def detect_issues_from_data(
                     "urls": [p["url"] for p in dom_pages],
                     "target_url": dominant_target,
                     "target_canonical": dominant_target,
-                    "evidence": [{"table": "crawl_pages", "id": p["id"], "field": "canonical", "value": p.get("canonical")} for p in dom_pages],
+                    "evidence": [{"table": "crawl_pages", "id": p.get("id"), "field": "canonical", "value": p.get("canonical")} for p in dom_pages],
                 })
 
     # Duplicate Titles (A-05: Grouped with exact shared text)
@@ -509,6 +665,22 @@ def detect_issues_from_data(
                         for p in missing_crawled_pages
                     ],
                 })
+
+    # Robots.txt Missing check
+    if robots_found is False:
+        candidates.append({
+            "type": "missing_robots_txt",
+            "urls": [crawl_pages[0].get("url")] if crawl_pages else [],
+            "severity": "medium",
+            "impact": "No robots.txt file was found at the site root, preventing search crawlers from discovering crawl directives and sitemap locations.",
+            "fix_hint": "Deploy a valid robots.txt at your domain root with User-agent and Sitemap directives.",
+            "evidence": [{
+                "table": "sitemap.xml",
+                "id": "robots.txt",
+                "field": "status",
+                "value": "missing"
+            }]
+        })
 
     # Assign stable candidate IDs (C-001, C-002, ...)
     for idx, c in enumerate(candidates, start=1):

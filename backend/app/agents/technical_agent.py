@@ -215,6 +215,7 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
     "canonical_mass_misconfiguration": "high",
     "meta_description_placeholder": "high",
     "missing_title": "high",
+    "noindex_canonical_conflict": "high",
     "low_performance_score": "high",
     "slow_lcp": "high",
     "poor_cls": "high",
@@ -223,12 +224,16 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
 
     # Medium base severity
     "redirect_chain": "medium",
+    "insecure_http_url": "medium",
     "canonical_to_other": "medium",
     "indexable_private_page": "medium",
     "missing_canonical": "medium",
     "meta_description_too_short": "medium",
     "duplicate_title": "medium",
     "missing_h1": "medium",
+    "multiple_h1": "medium",
+    "broken_hash_link": "medium",
+    "unmuted_autoplay_video": "medium",
     "lcp_needs_improvement": "medium",
     "orphan_page": "medium",
     "brand_repeated_in_title": "medium",
@@ -236,9 +241,11 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
     "sitemap_missing": "medium",
     "sitemap_unreadable": "medium",
     "crawled_page_missing_from_sitemap": "medium",
+    "missing_robots_txt": "medium",
 
     # Low base severity
     "cls_needs_improvement": "low",
+    "trailing_slash_inconsistency": "low",
     "title_borderline": "low",
     "title_too_long": "low",
     "title_too_short": "low",
@@ -246,6 +253,17 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
     "meta_borderline": "low",
     "meta_too_long": "low",
     "duplicate_meta_description": "low",
+    "missing_image_alt": "low",
+    "missing_image_dimensions": "low",
+    "non_modern_image_format": "low",
+    "missing_schema": "low",
+    "missing_open_graph": "low",
+    "missing_twitter_card": "low",
+    "missing_breadcrumbs": "low",
+    "missing_legal_pages": "low",
+    "slug_typo": "low",
+    "content_typo": "low",
+    "currency_anomaly": "low",
 }
 
 def get_deterministic_severity(issue_type: str, url_count: int = 1, total_pages: int = 1) -> str:
