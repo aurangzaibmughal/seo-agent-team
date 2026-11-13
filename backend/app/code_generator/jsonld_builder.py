@@ -44,7 +44,7 @@ class JsonLdBuilder:
 
         # Site name: clean from title or H1
         raw_name = homepage.get("h1") or homepage.get("title") or parsed.netloc
-        site_name = raw_name.split("|")[0].split("—")[0].split("–")[0].strip() or "WebSpire"
+        site_name = raw_name.split("|")[0].split("—")[0].split("–")[0].strip() or (parsed.netloc.split(".")[0].title() if parsed.netloc else "Organization")
 
         provenance = {
             "name": f"crawl_pages:{homepage.get('id', 'homepage')}:title_h1",
@@ -152,7 +152,7 @@ class JsonLdBuilder:
 
         parsed = urlparse(url)
         base_url = f"{parsed.scheme}://{parsed.netloc}"
-        org_name = (homepage.get("title") or "WebSpire").split("|")[0].strip()
+        org_name = (homepage.get("title") or parsed.netloc or "Organization").split("|")[0].strip()
 
         schema: Dict[str, Any] = {
             "@context": "https://schema.org",
@@ -214,7 +214,7 @@ class JsonLdBuilder:
             return None, {}
 
         url = page.get("url", "")
-        name = (homepage.get("title") or "WebSpire").split("|")[0].strip()
+        name = (homepage.get("title") or parsed.netloc or "Organization").split("|")[0].strip()
         schema: Dict[str, Any] = {
             "@context": "https://schema.org",
             "@type": "ProfessionalService",

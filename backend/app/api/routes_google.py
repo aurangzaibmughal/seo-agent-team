@@ -87,7 +87,7 @@ async def get_gsc_sites(user_id: str = "default_user"):
         # Dev fallback when Google OAuth is not configured
         return [
             {"siteUrl": "sc-domain:example.com", "permissionLevel": "siteOwner"},
-            {"siteUrl": "https://webspire-agency.vercel.app/", "permissionLevel": "siteOwner"}
+            {"siteUrl": "https://example.com/", "permissionLevel": "siteOwner"}
         ]
     sites = await list_gsc_sites(token)
     return sites
@@ -99,7 +99,7 @@ async def get_ga4_properties(user_id: str = "default_user"):
     if not token:
         # Dev fallback
         return [
-            {"propertyId": "987654321", "displayName": "Webspire Production", "account": "Webspire LLC"}
+            {"propertyId": "987654321", "displayName": "Example Production", "account": "Example LLC"}
         ]
     props = await list_ga4_properties(token)
     return props

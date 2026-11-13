@@ -284,7 +284,7 @@ const PIPELINE_STEPS = [
 ];
 
 export default function Home() {
-  const [targetUrl, setTargetUrl] = useState("https://webspire-agency.vercel.app");
+  const [targetUrl, setTargetUrl] = useState("");
   const [maxPages, setMaxPages] = useState(30);
   const [freshPsi, setFreshPsi] = useState(false);
   const [competitorsInput, setCompetitorsInput] = useState("");

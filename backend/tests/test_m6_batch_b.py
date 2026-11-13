@@ -228,7 +228,7 @@ def test_cost_caps_enforcement_and_graceful_fallback():
     job_id = f"test-cost-cap-{uuid4().hex[:8]}"
 
     # Test check_cost_caps logic
-    with patch.object(settings, "MAX_JOB_COST_USD", 0.10):
+    with patch.object(settings, "MAX_JOB_COST_USD", 0.10), patch.object(settings, "DAILY_COST_CAP_USD", 10000.0):
         # Under cap
         cap_hit, _ = check_cost_caps(job_id, 0.05)
         assert cap_hit is False
@@ -261,7 +261,7 @@ def test_cost_caps_mid_run_crossing_falls_back():
             (job_id, "https://webspire-agency.vercel.app/", "running", 0.0)
         )
 
-    with patch.object(settings, "MAX_JOB_COST_USD", 0.10):
+    with patch.object(settings, "MAX_JOB_COST_USD", 0.10), patch.object(settings, "DAILY_COST_CAP_USD", 10000.0):
         # Stage 1: Technical costs $0.06 (under cap)
         tech_cost = 0.06
         cap1, _ = check_cost_caps(job_id, tech_cost)

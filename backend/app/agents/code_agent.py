@@ -41,7 +41,7 @@ class CodeGeneratorAgent:
         )), crawl_pages[0] if crawl_pages else {})
 
         base_url = f"{urlparse(homepage.get('url', 'https://example.com')).scheme}://{urlparse(homepage.get('url', 'https://example.com')).netloc}"
-        brand_name = (homepage.get("title") or "WebSpire").split("|")[0].split("—")[0].split("–")[0].strip()
+        brand_name = (homepage.get("title") or (urlparse(base_url).netloc.split(".")[0].title() if urlparse(base_url).netloc else "Official Website")).split("|")[0].split("—")[0].split("–")[0].strip() or "Official Website"
 
         # Map issues & tasks for provenance
         tech_map = {iss.type: iss for iss in verified_tech_issues}
@@ -261,7 +261,7 @@ class CodeGeneratorAgent:
             home_rw_title = _get_rw_attr(home_rewrite, "suggested_title")
             home_rw_meta = _get_rw_attr(home_rewrite, "suggested_meta")
             
-            # Shortened homepage title <= 60 chars keeping descriptor (e.g. "WebSpire | Pakistan's Trusted Digital & Web Agency")
+            # Shortened homepage title <= 60 chars keeping descriptor
             if home_rw_title and len(home_rw_title) <= 60:
                 short_title = home_rw_title
             else:
@@ -359,7 +359,7 @@ class CodeGeneratorAgent:
                 # Rule for /portfolio: title must be "Portfolio"
                 if p_path == "/portfolio":
                     p_title = "Portfolio"
-                    p_desc = "Explore WebSpire's portfolio of custom Next.js web applications, e-commerce stores, UI/UX case studies, and enterprise digital solutions delivered for global clients."
+                    p_desc = f"Explore {brand_name}'s portfolio of custom web applications, e-commerce stores, UI/UX case studies, and enterprise digital solutions."
                 else:
                     is_dup_t = any(iss.type == "duplicate_title" and any(u.rstrip("/") == p_url for u in iss.urls) for iss in verified_tech_issues)
                     is_long_t = len(p_crawled.get("title", "")) > 60

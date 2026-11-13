@@ -101,8 +101,8 @@ def test_psi_rules_detector():
             "url": "https://example.com/slow",
             "strategy": "mobile",
             "performance_score": 42,
-            "lcp_ms": 3400.0,
-            "cls": 0.25,
+            "lcp_ms": 4500.0,
+            "cls": 0.35,
         }
     ]
     candidates = detect_issues_from_data(crawl_pages=[], crawl_links=[], psi_results=mock_psi)

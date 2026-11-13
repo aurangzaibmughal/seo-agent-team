@@ -774,7 +774,7 @@ class Verifier:
                 if num not in corpus_norm:
                     return False, f"Number '{num}' not found in page text or project name."
 
-            # 6. Proper Nouns: CamelCase / internal capitalization (e.g. WebSpire, Next.js, WordPress)
+            # 6. Proper Nouns: CamelCase / internal capitalization (e.g. Next.js, WordPress)
             raw_words = re.findall(r"\b[a-zA-Z0-9#\-\.]+\b", text)
             for w in raw_words:
                 clean_w = w.strip(".,;:!?\"'()[]{}")

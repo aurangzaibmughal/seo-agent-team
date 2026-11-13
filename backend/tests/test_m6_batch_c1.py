@@ -1,4 +1,5 @@
 import ast
+from pathlib import Path
 import socket
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -216,15 +217,16 @@ def test_ssrf_allows_safe_public_urls():
 
 def test_static_crawler_uses_safe_fetch_url():
     """Statically verifies that crawler modules never use raw client.get/httpx.get outside safe_fetch_url."""
+    base_app = Path(__file__).parent.parent / "app"
     crawler_files = [
-        "app/crawler/engine.py",
-        "app/crawler/competitor_crawler.py"
+        base_app / "crawler" / "engine.py",
+        base_app / "crawler" / "competitor_crawler.py"
     ]
     violations = []
 
     for filepath in crawler_files:
         with open(filepath, "r", encoding="utf-8") as f:
-            tree = ast.parse(f.read(), filename=filepath)
+            tree = ast.parse(f.read(), filename=str(filepath))
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
