@@ -17,6 +17,8 @@ HUMAN_ISSUE_LABELS: Dict[str, str] = {
     "canonical_mass_misconfiguration": "Resolve mass canonical misconfiguration",
     "duplicate_title": "Rewrite duplicate page titles",
     "duplicate_meta_description": "Rewrite duplicate meta descriptions",
+    "meta_description_placeholder": "Replace placeholder meta descriptions",
+    "meta_description_too_short": "Expand short meta descriptions",
     "title_borderline": "Review borderline title tags (61-65 chars)",
     "title_too_long": "Optimize long title tags (>65 chars)",
     "title_too_short": "Expand short title tags",
@@ -34,6 +36,8 @@ HUMAN_ISSUE_LABELS: Dict[str, str] = {
     "brand_repeated_in_title": "Deduplicate brand occurrences in title tags",
     "sitemap_lists_non_existent_url": "Remove 404 URLs from sitemap",
     "crawled_page_missing_from_sitemap": "Add missing crawled pages to sitemap",
+    "sitemap_missing": "Deploy valid XML sitemap",
+    "sitemap_unreadable": "Repair unreadable XML sitemap",
 }
 
 def format_human_task_title(issue_type: str, url: str) -> str:
@@ -104,6 +108,10 @@ class StrategistAgent:
                     )
                     report.tokens_prompt = p_tokens
                     report.tokens_completion = c_tokens
+                    if not report.tasks and (verified_tech or verified_perf or verified_research):
+                        # LLM returned empty tasks: fallback to deterministic synthesizer
+                        print("LLM returned 0 tasks. Falling back to deterministic synthesizer.")
+                        report = cls._run_deterministic(verified_tech, verified_perf, verified_research)
                     # Enforce code computation of priority scores and sorting
                     cls._compute_priority_scores_and_sort(report)
                     return report, "llm", cost, None, model_name
@@ -161,6 +169,24 @@ class StrategistAgent:
         # Rule: Per-URL tasks ONLY for broken links (broken_link_4xx) and missing H1 (missing_h1).
         # One task per issue type for all others, with URL list in task details.
         for iss in tech_issues:
+            # Map issue type to appropriate implementation week
+            if iss.type in ("broken_link_4xx", "server_error_5xx", "missing_canonical", "canonical_mass_misconfiguration", "sitemap_missing", "sitemap_unreadable") or (iss.severity == "high" and "canonical" in iss.type):
+                task_week = 1
+                task_cat = "technical"
+                task_imp = 5
+            elif iss.type in ("slow_lcp", "poor_cls", "low_performance_score"):
+                task_week = 3
+                task_cat = "technical"
+                task_imp = 4
+            elif iss.type in ("crawled_page_missing_from_sitemap", "sitemap_lists_non_existent_url", "orphan_page") or iss.severity == "low":
+                task_week = 4
+                task_cat = "technical"
+                task_imp = 3
+            else:
+                task_week = 2
+                task_cat = "on_page"
+                task_imp = 4 if iss.severity == "high" else 3
+
             if iss.type in ("broken_link_4xx", "missing_h1"):
                 for u in iss.urls:
                     parsed_path = u.split("://")[-1].split("/", 1)[-1]
@@ -168,9 +194,9 @@ class StrategistAgent:
                     tasks.append(StrategyTask(
                         id=f"S-{task_idx:03d}",
                         title=format_human_task_title(iss.type, u),
-                        category="technical" if iss.type == "broken_link_4xx" else "on_page",
-                        week=1 if iss.type == "broken_link_4xx" else 2,
-                        impact=5 if iss.type == "broken_link_4xx" else 4,
+                        category=task_cat,
+                        week=task_week,
+                        impact=task_imp,
                         effort=2,
                         depends_on=[],
                         source_refs=[StrategyTaskSourceRef(kind="tech_issue", id=iss.id)],
@@ -183,9 +209,9 @@ class StrategistAgent:
                 tasks.append(StrategyTask(
                     id=f"S-{task_idx:03d}",
                     title=format_group_task_title(iss.type, len(iss.urls)),
-                    category="technical" if iss.severity == "high" or "canonical" in iss.type else "on_page",
-                    week=1 if iss.severity == "high" else 2,
-                    impact=5 if iss.severity == "high" else 3,
+                    category=task_cat,
+                    week=task_week,
+                    impact=task_imp,
                     effort=3 if len(iss.urls) > 5 else 2,
                     depends_on=[tasks[0].id] if tasks else [],
                     source_refs=[StrategyTaskSourceRef(kind="tech_issue", id=iss.id)],

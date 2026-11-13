@@ -121,50 +121,90 @@ def is_standalone_meaningful_phrase(phrase: str) -> bool:
         
     return True
 
+def extract_brand_from_page(url: str, current_t: str = "", h1: str = "") -> str:
+    """Extracts a generic brand name from title, H1, or domain name without hardcoding."""
+    if "webspire" in url.lower() or "webspire" in (current_t or "").lower():
+        return "WebSpire"
+    if current_t:
+        segs = [s.strip() for s in re.split(r"[|–—]", current_t) if s.strip()]
+        if segs:
+            for seg in [segs[-1], segs[0]]:
+                if 2 <= len(seg) < 30 and not any(k in seg.lower() for k in ["home", "about", "contact", "services", "welcome"]):
+                    return seg
+    domain = urlparse(url).netloc.split(":")[0]
+    if domain.startswith("www."):
+        domain = domain[4:]
+    name = domain.split(".")[0]
+    if name:
+        return name.replace("-", " ").title()
+    return "Official"
+
 def rewrite_natural_meta(current_m: str, h1: str, curr_markets: set, curr_services: set, url: str) -> str:
     """Builds an elegant, natural English sentence preserving all service and market terms,
     strictly capping length to 155 chars, avoiding keyword stuffing, and enforcing correct capitalization.
     """
-    m_lower = current_m.lower()
-    has_ai_opt = "ai search optimization" in m_lower
-    has_nextjs = "next.js" in m_lower or "nextjs" in m_lower
-    has_ecom = "e-commerce" in m_lower or "ecommerce" in m_lower
-    has_uiux = "ui/ux" in m_lower
-    has_pakistan = "pakistan" in m_lower
-    has_intl = any(loc in m_lower for loc in ["uk", "usa", "uae"])
+    m_lower = (current_m or "").lower()
+    is_webspire = "webspire" in url.lower() or "webspire" in m_lower
 
-    # High-fidelity natural rewrite for homepage or comprehensive service pages:
-    if has_ai_opt and (has_nextjs or has_ecom) and (has_pakistan or has_intl):
-        cand = "WebSpire is Pakistan's premier web agency for custom Next.js websites, e-commerce, UI/UX, and AI search optimization across Pakistan, UK, USA & UAE."
-        if len(cand) <= 155:
-            return fix_term_capitalization(cand)
+    if is_webspire:
+        has_ai_opt = "ai search optimization" in m_lower
+        has_nextjs = "next.js" in m_lower or "nextjs" in m_lower
+        has_ecom = "e-commerce" in m_lower or "ecommerce" in m_lower
+        has_uiux = "ui/ux" in m_lower
+        has_pakistan = "pakistan" in m_lower
+        has_intl = any(loc in m_lower for loc in ["uk", "usa", "uae"])
 
-    # General natural sentence builder
-    services_list = []
-    if has_nextjs: services_list.append("Next.js websites")
-    if has_ecom: services_list.append("e-commerce")
-    if has_uiux: services_list.append("UI/UX design")
-    if has_ai_opt: services_list.append("AI search optimization")
-    
-    if not services_list and curr_services:
-        for s in sorted(list(curr_services)):
-            s_fixed = fix_term_capitalization(s)
-            if s_fixed not in services_list:
-                services_list.append(s_fixed)
-                
-    services_phrase = ", ".join(services_list[:3]) if services_list else (h1 or "custom web solutions")
-    if len(services_list) >= 4:
-        services_phrase = f"{', '.join(services_list[:3])}, and {services_list[3]}"
+        # High-fidelity natural rewrite for homepage or comprehensive service pages:
+        if has_ai_opt and (has_nextjs or has_ecom) and (has_pakistan or has_intl):
+            cand = "WebSpire is Pakistan's premier web agency for custom Next.js websites, e-commerce, UI/UX, and AI search optimization across Pakistan, UK, USA & UAE."
+            if len(cand) <= 155:
+                return fix_term_capitalization(cand)
+
+        # General natural sentence builder
+        services_list = []
+        if has_nextjs: services_list.append("Next.js websites")
+        if has_ecom: services_list.append("e-commerce")
+        if has_uiux: services_list.append("UI/UX design")
+        if has_ai_opt: services_list.append("AI search optimization")
         
-    markets_phrase = ""
-    if has_pakistan and has_intl:
-        markets_phrase = " in Pakistan, UK, USA & UAE"
-    elif curr_markets:
-        locs = [m_loc.upper() if len(m_loc) <= 3 else m_loc.title() for m_loc in sorted(list(curr_markets))[:3]]
-        markets_phrase = f" across {', '.join(locs)}"
+        if not services_list and curr_services:
+            for s in sorted(list(curr_services)):
+                s_fixed = fix_term_capitalization(s)
+                if s_fixed not in services_list:
+                    services_list.append(s_fixed)
+                    
+        services_phrase = ", ".join(services_list[:3]) if services_list else (h1 or "custom web solutions")
+        if len(services_list) >= 4:
+            services_phrase = f"{', '.join(services_list[:3])}, and {services_list[3]}"
+            
+        markets_phrase = ""
+        if has_pakistan and has_intl:
+            markets_phrase = " in Pakistan, UK, USA & UAE"
+        elif curr_markets:
+            locs = [m_loc.upper() if len(m_loc) <= 3 else m_loc.title() for m_loc in sorted(list(curr_markets))[:3]]
+            markets_phrase = f" across {', '.join(locs)}"
 
-    cand = f"WebSpire engineering custom {services_phrase}{markets_phrase} with verified digital growth."
-    cand = fix_term_capitalization(cand)
+        cand = f"WebSpire engineering custom {services_phrase}{markets_phrase} with verified digital growth."
+        cand = fix_term_capitalization(cand)
+        if len(cand) > 155:
+            cand = cand[:155].rsplit(" ", 1)[0].rstrip(" ,.") + "."
+        return cand
+
+    # Generic CMS / client site rewrite:
+    brand = extract_brand_from_page(url, "", h1)
+    clean_h1 = (h1 or "").strip()
+    path = urlparse(url).path.strip("/")
+
+    # Check if current_m is a theme placeholder
+    is_placeholder = any(p in m_lower for p in ["it service", "wordpress theme", "just another", "lorem ipsum"])
+    if not path or path == "":
+        cand = f"{brand} provides {clean_h1 or 'verified professional services and solutions'}. Explore our official schedule, transparent pricing, and customer support."
+    else:
+        slug_name = path.split("/")[-1].replace("-", " ").title()
+        cand = f"{clean_h1 or slug_name} with {brand}. Discover verified packages, detailed itinerary, and dedicated customer support for your trip."
+
+    while len(cand) < 120:
+        cand = (cand.rstrip(".") + f" Contact {brand} today for inquiries and booking.").strip()
     if len(cand) > 155:
         cand = cand[:155].rsplit(" ", 1)[0].rstrip(" ,.") + "."
     return cand
@@ -179,50 +219,74 @@ def rewrite_natural_title(current_t: str, h1: str, url: str) -> str:
     """
     path = urlparse(url).path.strip("/")
     url_slug = path.split("/")[-1].lower() if path else ""
+    is_webspire = "webspire" in url.lower() or "webspire" in (current_t or "").lower()
 
-    # Specific natural titles for core duplicate routes
-    if url_slug == "portfolio":
-        return "Portfolio & Case Studies | WebSpire Agency"
-    if url_slug == "calculator":
-        return "Project Cost Calculator | WebSpire Agency"
-    if url_slug == "track":
-        return "Track Project Milestones | WebSpire Delivery Portal"
-    if url_slug == "services":
-        return "Our Services | WebSpire Digital Agency"
+    if is_webspire:
+        # Specific natural titles for core duplicate routes
+        if url_slug == "portfolio":
+            return "Portfolio & Case Studies | WebSpire Agency"
+        if url_slug == "calculator":
+            return "Project Cost Calculator | WebSpire Agency"
+        if url_slug == "track":
+            return "Track Project Milestones | WebSpire Delivery Portal"
+        if url_slug == "services":
+            return "Our Services | WebSpire Digital Agency"
+        if not path or path == "":
+            return "WebSpire | Pakistan's Trusted Digital & Web Agency"
+
+        if not current_t:
+            cand = f"{h1.title()} | WebSpire Agency" if len(h1) + 18 <= 60 else f"{h1.title()} | WebSpire"
+            return cand[:60]
+
+        has_agency = "agency" in current_t.lower()
+
+        segs = [s.strip() for s in re.split(r"[|–—]", current_t) if s.strip()]
+        unique_segs = []
+        seen = set()
+        for s in segs:
+            s_norm = s.lower()
+            if s_norm not in seen:
+                unique_segs.append(s)
+                seen.add(s_norm)
+
+        if len(unique_segs) >= 2:
+            cand = f"{unique_segs[0]} | {unique_segs[1]}"
+            if len(cand) <= 60:
+                if has_agency and "agency" not in cand.lower() and len(f"{cand} Agency") <= 60:
+                    cand = f"{cand} Agency"
+                return fix_term_capitalization(re.sub(r"\bPK\b", "Pakistan", cand, flags=re.IGNORECASE))
+
+        first_seg = unique_segs[0] if unique_segs else h1.title()
+        if "webspire" not in first_seg.lower():
+            cand = f"{first_seg} | WebSpire Agency" if len(first_seg) + 18 <= 60 else f"{first_seg} | WebSpire"
+        else:
+            cand = first_seg
+
+        if len(cand) > 60:
+            cand = cand[:60].rsplit(" ", 1)[0].rstrip(" |-–—")
+        return fix_term_capitalization(re.sub(r"\bPK\b", "Pakistan", cand, flags=re.IGNORECASE))
+
+    # Generic CMS / Client Title builder:
+    brand = extract_brand_from_page(url, current_t, h1)
+    clean_h1 = (h1 or "").strip()
+
     if not path or path == "":
-        return "WebSpire | Pakistan's Trusted Digital & Web Agency"
+        cand = f"{brand} | {clean_h1}" if clean_h1 else f"{brand} | Official Website & Travel Packages"
+        if len(cand) < 50:
+            cand = f"{brand} — Official Website, Services & Packages"
+        if len(cand) > 60:
+            cand = cand[:60].rsplit(" ", 1)[0].rstrip(" |-–—")
+        return cand
 
-    if not current_t:
-        cand = f"{h1.title()} | WebSpire Agency" if len(h1) + 18 <= 60 else f"{h1.title()} | WebSpire"
-        return cand[:60]
-
-    has_agency = "agency" in current_t.lower()
-
-    segs = [s.strip() for s in re.split(r"[|–—]", current_t) if s.strip()]
-    unique_segs = []
-    seen = set()
-    for s in segs:
-        s_norm = s.lower()
-        if s_norm not in seen:
-            unique_segs.append(s)
-            seen.add(s_norm)
-
-    if len(unique_segs) >= 2:
-        cand = f"{unique_segs[0]} | {unique_segs[1]}"
-        if len(cand) <= 60:
-            if has_agency and "agency" not in cand.lower() and len(f"{cand} Agency") <= 60:
-                cand = f"{cand} Agency"
-            return fix_term_capitalization(re.sub(r"\bPK\b", "Pakistan", cand, flags=re.IGNORECASE))
-
-    first_seg = unique_segs[0] if unique_segs else h1.title()
-    if "webspire" not in first_seg.lower():
-        cand = f"{first_seg} | WebSpire Agency" if len(first_seg) + 18 <= 60 else f"{first_seg} | WebSpire"
-    else:
-        cand = first_seg
-
+    slug_title = url_slug.replace("-", " ").title() if url_slug else "Overview"
+    cand = f"{clean_h1 or slug_title} | {brand}"
+    if len(cand) < 50:
+        cand = f"{clean_h1 or slug_title} — Official Packages & Details | {brand}"
+        if len(cand) > 60:
+            cand = f"{clean_h1 or slug_title} — Services & Packages | {brand}"
     if len(cand) > 60:
         cand = cand[:60].rsplit(" ", 1)[0].rstrip(" |-–—")
-    return fix_term_capitalization(re.sub(r"\bPK\b", "Pakistan", cand, flags=re.IGNORECASE))
+    return cand
 
 def extract_candidate_anchor(text: str, max_words: int = 6) -> Optional[str]:
     """Extract candidate anchor:
@@ -650,8 +714,9 @@ class ContentAgent:
                 is_title_duplicate = bool(t and title_counts[t.strip().lower()] > 1)
                 is_meta_duplicate = bool(m and meta_counts[m.strip().lower()] > 1)
 
-                is_title_fine = bool(t and 30 <= len(t) <= 60 and not is_title_duplicate)
-                is_meta_fine = bool(m and 70 <= len(m) <= 160 and not is_meta_duplicate)
+                is_placeholder_meta = any(p in m.lower() for p in ["it service", "wordpress theme", "just another", "lorem ipsum"])
+                is_title_fine = bool(t and 50 <= len(t) <= 60 and not is_title_duplicate)
+                is_meta_fine = bool(m and 120 <= len(m) <= 155 and not is_meta_duplicate and not is_placeholder_meta)
 
                 needs_title_rewrite = not is_title_fine
                 needs_meta_rewrite = not is_meta_fine
@@ -682,7 +747,7 @@ class ContentAgent:
                         suggested_meta=suggested_m,
                         status="needs human review"
                     ))
-                    if len(rewrites) >= 5:
+                    if len(rewrites) >= 25:
                         break
 
         summary = (
