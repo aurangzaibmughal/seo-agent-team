@@ -91,7 +91,7 @@ def parse_html_page(
     canonical_tags = soup.find_all("link", attrs={"rel": re.compile(r"^canonical$", re.I)})
     multiple_canonicals = len(canonical_tags) > 1
     raw_canonical = canonical_tags[0].get("href", "").strip() if canonical_tags else None
-    canonical = normalize_url(raw_canonical, base_url=current_url) if raw_canonical else None
+    canonical = normalize_url(raw_canonical, base_url=current_url, trailing_slash=None) if raw_canonical else None
 
     # Robots meta tag
     robots_tag = soup.find("meta", attrs={"name": re.compile(r"^robots$", re.I)})

@@ -1,15 +1,18 @@
+from pathlib import Path
 import pytest
 from app.crawler.parser import parse_html_page
 from app.agents.issue_rules import detect_issues_from_data
 from app.services.reporter import ReportExporter
 
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
 def test_a04_canonical_audit_flags_trip_without_canonical_and_not_home():
     # Read fixtures
-    with open("tests/fixtures/alghaffar/home.html", "r", encoding="utf-8") as f:
+    with open(FIXTURES_DIR / "alghaffar" / "home.html", "r", encoding="utf-8") as f:
         home_html = f.read()
-    with open("tests/fixtures/alghaffar/about.html", "r", encoding="utf-8") as f:
+    with open(FIXTURES_DIR / "alghaffar" / "about.html", "r", encoding="utf-8") as f:
         about_html = f.read()
-    with open("tests/fixtures/alghaffar/trip-no-canonical.html", "r", encoding="utf-8") as f:
+    with open(FIXTURES_DIR / "alghaffar" / "trip-no-canonical.html", "r", encoding="utf-8") as f:
         trip_no_can_html = f.read()
 
     p_home = parse_html_page(home_html, "https://www.alghaffar.com.pk/", status_code=200)
