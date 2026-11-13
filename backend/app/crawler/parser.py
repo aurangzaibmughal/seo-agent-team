@@ -4,6 +4,14 @@ from urllib.parse import urljoin, urlparse
 from collections import Counter
 from bs4 import BeautifulSoup
 
+from app.crawler.url_utils import (
+    normalize_url,
+    urls_compare_equal,
+    canonical_url_key,
+    detect_trailing_slash_convention,
+    filter_tracking_params
+)
+
 DEFAULT_STOPWORDS = {
     "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are",
     "as", "at", "be", "because", "been", "before", "being", "below", "between", "both", "but",
@@ -25,34 +33,6 @@ def extract_text_terms(text: str, stopwords: Optional[set] = None, top_n: int = 
     valid_tokens = [t for t in tokens if len(t) > 2 and t not in sw and not t.isdigit()]
     counts = Counter(valid_tokens)
     return [term for term, _ in counts.most_common(top_n)]
-
-def normalize_url(url: str, base_url: str = "") -> Optional[str]:
-    """Resolves relative URLs, removes fragments, standardizes scheme/netloc."""
-    if not url:
-        return None
-    url = url.strip()
-    if url.startswith(("javascript:", "mailto:", "tel:", "#", "whatsapp:", "data:")):
-        return None
-    
-    if base_url:
-        url = urljoin(base_url, url)
-    
-    parsed = urlparse(url)
-    if not parsed.scheme or parsed.scheme not in ("http", "https"):
-        return None
-    
-    path = parsed.path
-    if path.endswith("/") and len(path) > 1:
-        path = path.rstrip("/")
-        
-    netloc = parsed.netloc.lower()
-    if netloc.endswith(":80"):
-        netloc = netloc[:-3]
-    elif netloc.endswith(":443"):
-        netloc = netloc[:-4]
-
-    query = f"?{parsed.query}" if parsed.query else ""
-    return f"{parsed.scheme}://{netloc}{path or '/'}{query}"
 
 def is_internal_url(url: str, base_domain: str) -> bool:
     try:
@@ -97,8 +77,9 @@ def parse_html_page(
     meta_desc = meta_desc_tag.get("content", "").strip() if meta_desc_tag else None
 
     # Headings (preserve spacing across inline elements/spans)
-    h1_tag = soup.find("h1")
-    h1 = re.sub(r"\s+", " ", h1_tag.get_text(separator=" ", strip=True)).strip() if h1_tag else None
+    h1_tags = soup.find_all("h1")
+    all_h1s = [re.sub(r"\s+", " ", h.get_text(separator=" ", strip=True)).strip() for h in h1_tags if h.get_text(strip=True)]
+    h1 = all_h1s[0] if all_h1s else None
 
     headings: List[Dict[str, str]] = []
     for h in soup.find_all(["h1", "h2", "h3"]):
@@ -106,9 +87,10 @@ def parse_html_page(
         if h_text:
             headings.append({"level": h.name.lower(), "text": h_text})
 
-    # Canonical
-    canonical_tag = soup.find("link", attrs={"rel": re.compile(r"^canonical$", re.I)})
-    raw_canonical = canonical_tag.get("href", "").strip() if canonical_tag else None
+    # Canonical (Audit fix: detect multiple canonicals and record raw attribute)
+    canonical_tags = soup.find_all("link", attrs={"rel": re.compile(r"^canonical$", re.I)})
+    multiple_canonicals = len(canonical_tags) > 1
+    raw_canonical = canonical_tags[0].get("href", "").strip() if canonical_tags else None
     canonical = normalize_url(raw_canonical, base_url=current_url) if raw_canonical else None
 
     # Robots meta tag
@@ -142,7 +124,7 @@ def parse_html_page(
                 "anchor_text": anchor[:100] if anchor else ""
             })
 
-    # Precise indexability reasoning
+    # Precise indexability reasoning using robust URL equality
     indexable = True
     indexability_status = "indexable"
 
@@ -155,7 +137,7 @@ def parse_html_page(
     elif is_meta_noindex:
         indexable = False
         indexability_status = "noindex_meta"
-    elif canonical and normalize_url(canonical) != normalize_url(current_url):
+    elif canonical and not urls_compare_equal(canonical, current_url):
         indexable = False
         indexability_status = "canonical_to_other"
 
@@ -165,7 +147,10 @@ def parse_html_page(
         "title": title,
         "meta_desc": meta_desc,
         "h1": h1,
+        "h1_list": all_h1s,
         "canonical": canonical,
+        "raw_canonical": raw_canonical,
+        "multiple_canonicals": multiple_canonicals,
         "word_count": word_count,
         "links_out": len(outlinks_list),
         "indexable": indexable,
