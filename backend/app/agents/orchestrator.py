@@ -133,11 +133,16 @@ async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, projec
             except Exception:
                 sitemap_entries = []
 
+        sitemap_status = job_record.get("sitemap_status")
+        if not sitemap_status:
+            sitemap_status = "found" if job_record.get("sitemap_found") == 1 else "missing"
+
         candidates = detect_issues_from_data(
             crawl_pages,
             crawl_links,
             psi_results,
             sitemap_entries=sitemap_entries,
+            sitemap_status=sitemap_status,
         )
 
         tech_start = datetime.now(timezone.utc).isoformat()

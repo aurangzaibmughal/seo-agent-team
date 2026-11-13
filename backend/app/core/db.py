@@ -276,6 +276,7 @@ def init_db():
     try:
         cursor.execute("ALTER TABLE jobs ADD COLUMN failed_fetches_json TEXT DEFAULT '[]'")
         cursor.execute("ALTER TABLE jobs ADD COLUMN crawl_incomplete INTEGER DEFAULT 0")
+        cursor.execute("ALTER TABLE jobs ADD COLUMN sitemap_status TEXT DEFAULT 'pending'")
     except Exception:
         pass
     try:

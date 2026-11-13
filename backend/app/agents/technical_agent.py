@@ -25,6 +25,18 @@ ISSUE_METADATA = {
         "impact": "Sitemap declares URLs that return HTTP 404/5xx or are not crawlable, wasting search engine crawl budget and causing indexation dropouts.",
         "fix_hint": "Remove non-existent 404 URLs from sitemap or publish the missing pages."
     },
+    "sitemap_missing": {
+        "severity": "medium",
+        "effort": "low",
+        "impact": "Search engines cannot efficiently discover all indexable pages because no XML sitemap was found in robots.txt or standard paths.",
+        "fix_hint": "Generate an XML sitemap and reference it in robots.txt via 'Sitemap: https://domain/sitemap.xml'."
+    },
+    "sitemap_unreadable": {
+        "severity": "medium",
+        "effort": "low",
+        "impact": "XML sitemap returned HTTP 200 but contains invalid or malformed XML syntax, preventing search engines from parsing it.",
+        "fix_hint": "Validate XML syntax against the sitemaps.org schema and ensure all special characters in URLs are properly escaped."
+    },
     "crawled_page_missing_from_sitemap": {
         "severity": "medium",
         "effort": "low",
@@ -194,6 +206,8 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
     "orphan_page": "medium",
     "brand_repeated_in_title": "medium",
     "sitemap_lists_non_existent_url": "medium",
+    "sitemap_missing": "medium",
+    "sitemap_unreadable": "medium",
     "crawled_page_missing_from_sitemap": "medium",
 
     # Low base severity

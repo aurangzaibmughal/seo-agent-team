@@ -4,6 +4,7 @@ import difflib
 import re
 from urllib.parse import urlparse
 from app.core.classification import classify_page_type, is_admin_page
+from app.crawler.url_utils import canonical_url_key, urls_compare_equal
 
 def infer_brand_name(crawl_pages: List[Dict[str, Any]], brand_hint: Optional[str] = None) -> Optional[str]:
     """Infers the brand or project name from titles or URL domain."""
@@ -75,6 +76,7 @@ def detect_issues_from_data(
     brand_name: Optional[str] = None,
     sitemap_entries: Optional[List[Dict[str, Any]]] = None,
     sitemap_urls: Optional[Any] = None,
+    sitemap_status: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Deterministic, rule-based SEO issue detector (Plain Python, No LLM)."""
     candidates: List[Dict[str, Any]] = []
@@ -359,47 +361,77 @@ def detect_issues_from_data(
                 ],
             })
 
-    # Rule 2: crawled_page_missing_from_sitemap
-    known_sitemap_urls = set()
-    if sitemap_entries:
-        for e in sitemap_entries:
-            u_val = e.get("url") or ""
-            if u_val:
-                known_sitemap_urls.add(u_val.rstrip("/"))
-    if sitemap_urls:
-        for su in sitemap_urls:
-            if su:
-                known_sitemap_urls.add(su.rstrip("/"))
+    # Rule 2: Sitemap Discovery, Unreadable and Missing Checks (A-02)
+    if sitemap_status == "missing":
+        candidates.append({
+            "type": "sitemap_missing",
+            "urls": [crawl_pages[0].get("url")] if crawl_pages else [],
+            "severity": "medium",
+            "impact": "Search engines cannot efficiently discover all indexable pages because no XML sitemap was found in robots.txt or standard paths.",
+            "fix_hint": "Generate an XML sitemap and reference it in robots.txt via 'Sitemap: https://domain/sitemap.xml'.",
+            "evidence": [{
+                "table": "sitemap.xml",
+                "id": "sitemap",
+                "field": "status",
+                "value": "missing"
+            }]
+        })
+    elif sitemap_status == "unreadable":
+        candidates.append({
+            "type": "sitemap_unreadable",
+            "urls": [crawl_pages[0].get("url")] if crawl_pages else [],
+            "severity": "medium",
+            "impact": "XML sitemap returned HTTP 200 but contains invalid or malformed XML syntax, preventing search engines from parsing it.",
+            "fix_hint": "Validate XML syntax against the sitemaps.org schema and ensure all special characters in URLs are properly escaped.",
+            "evidence": [{
+                "table": "sitemap.xml",
+                "id": "sitemap",
+                "field": "status",
+                "value": "unreadable"
+            }]
+        })
+    else:
+        # Sitemaps found -> perform safe diff using canonical_url_key
+        known_sitemap_keys = set()
+        if sitemap_entries:
+            for e in sitemap_entries:
+                u_val = e.get("url") or ""
+                if u_val:
+                    known_sitemap_keys.add(canonical_url_key(u_val))
+        if sitemap_urls:
+            for su in sitemap_urls:
+                if su:
+                    known_sitemap_keys.add(canonical_url_key(su))
 
-    if known_sitemap_urls:
-        missing_crawled_pages = []
-        for p in crawl_pages:
-            if p.get("status_code") != 200:
-                continue
-            if not p.get("indexable"):
-                continue
-            canonical = p.get("canonical")
-            p_url = p.get("url", "")
-            if canonical and canonical.rstrip("/") != p_url.rstrip("/"):
-                continue
-            if p_url.rstrip("/") not in known_sitemap_urls:
-                missing_crawled_pages.append(p)
+        if known_sitemap_keys:
+            missing_crawled_pages = []
+            for p in crawl_pages:
+                if p.get("status_code") != 200:
+                    continue
+                if not p.get("indexable"):
+                    continue
+                canonical = p.get("canonical")
+                p_url = p.get("url", "")
+                if canonical and not urls_compare_equal(canonical, p_url):
+                    continue
+                if canonical_url_key(p_url) not in known_sitemap_keys:
+                    missing_crawled_pages.append(p)
 
-        if missing_crawled_pages:
-            candidates.append({
-                "type": "crawled_page_missing_from_sitemap",
-                "urls": [p["url"] for p in missing_crawled_pages],
-                "severity": "medium",
-                "evidence": [
-                    {
-                        "table": "crawl_pages",
-                        "id": p.get("id"),
-                        "field": "url",
-                        "value": p.get("url"),
-                    }
-                    for p in missing_crawled_pages
-                ],
-            })
+            if missing_crawled_pages:
+                candidates.append({
+                    "type": "crawled_page_missing_from_sitemap",
+                    "urls": [p["url"] for p in missing_crawled_pages],
+                    "severity": "medium",
+                    "evidence": [
+                        {
+                            "table": "crawl_pages",
+                            "id": p.get("id"),
+                            "field": "url",
+                            "value": p.get("url"),
+                        }
+                        for p in missing_crawled_pages
+                    ],
+                })
 
     # Assign stable candidate IDs (C-001, C-002, ...)
     for idx, c in enumerate(candidates, start=1):

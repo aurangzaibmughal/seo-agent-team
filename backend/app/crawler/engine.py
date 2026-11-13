@@ -9,6 +9,8 @@ import httpx
 from app.core.config import settings
 from app.core.db import DBManager
 from app.crawler.parser import normalize_url, is_internal_url, parse_html_page
+from app.crawler.url_utils import canonical_url_key, urls_compare_equal
+from app.crawler.sitemap_parser import discover_and_parse_sitemaps, SitemapDiscoveryResult
 from app.crawler.detector import PlatformDetector
 from app.core.security import validate_safe_url, safe_fetch_url, SSRFSecurityError
 
@@ -105,11 +107,15 @@ class AsyncCrawler:
         }
 
         async with httpx.AsyncClient(headers=headers, timeout=settings.CRAWL_TIMEOUT_SECONDS, follow_redirects=True) as client:
-            # 1. Fetch sitemap URLs concurrently
+            # 1. Fetch and discover sitemaps concurrently (A-02)
             try:
-                self.sitemap_urls = await fetch_sitemap_urls(client, self.start_url)
+                self.sitemap_discovery = await discover_and_parse_sitemaps(client, self.start_url)
+                self.sitemap_urls = self.sitemap_discovery.sitemap_urls
+                self.sitemap_status = self.sitemap_discovery.status
             except Exception:
+                self.sitemap_discovery = SitemapDiscoveryResult(status="missing")
                 self.sitemap_urls = set()
+                self.sitemap_status = "missing"
 
             # Seed discovered sitemap HTML pages into queue up to max_pages
             non_html_exts = (
@@ -177,19 +183,19 @@ class AsyncCrawler:
                 ".css", ".js", ".ico"
             ))
         }
-        in_sitemap_not_crawled = len(sitemap_html_urls - crawled_urls)
+        in_sitemap_not_crawled = len(sitemap_html_urls - crawled_urls) if self.sitemap_status == "found" else 0
 
-        # Missing crawled pages: 200 OK, indexable, canonical self omitted from sitemap
-        sitemap_norm_set = {u.rstrip("/") for u in self.sitemap_urls}
+        # Missing crawled pages using canonical_url_key: 200 OK, indexable, canonical self omitted from sitemap
+        sitemap_key_set = {canonical_url_key(u) for u in self.sitemap_urls}
         crawl_pages_db = DBManager.get_crawl_pages(self.job_id)
         missing_from_sitemap_pages = [
             p for p in crawl_pages_db
             if p.get("status_code") == 200
             and p.get("indexable")
-            and (not p.get("canonical") or p.get("canonical", "").rstrip("/") == p.get("url", "").rstrip("/"))
-            and p.get("url", "").rstrip("/") not in sitemap_norm_set
+            and (not p.get("canonical") or urls_compare_equal(p.get("canonical", ""), p.get("url", "")))
+            and canonical_url_key(p.get("url", "")) not in sitemap_key_set
         ]
-        crawled_not_in_sitemap = len(missing_from_sitemap_pages) if self.sitemap_urls else 0
+        crawled_not_in_sitemap = len(missing_from_sitemap_pages) if self.sitemap_status == "found" else 0
 
         incomplete_reasons = []
 
@@ -216,7 +222,8 @@ class AsyncCrawler:
 
         job_update: Dict = {
             "pages_crawled": self.crawled_count,
-            "sitemap_found": 1 if len(self.sitemap_urls) > 0 else 0,
+            "sitemap_found": 1 if self.sitemap_status == "found" else 0,
+            "sitemap_status": self.sitemap_status,
             "sitemap_entries_json": json.dumps(sitemap_entries),
             "in_sitemap_not_crawled": in_sitemap_not_crawled,
             "crawled_not_in_sitemap": crawled_not_in_sitemap,
