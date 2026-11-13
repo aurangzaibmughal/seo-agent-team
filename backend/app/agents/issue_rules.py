@@ -6,6 +6,21 @@ from urllib.parse import urlparse
 from app.core.classification import classify_page_type, is_admin_page
 from app.crawler.url_utils import canonical_url_key, urls_compare_equal
 
+PLACEHOLDER_PATTERNS = [
+    r"it service wordpress theme",
+    r"just another wordpress site",
+    r"lorem ipsum",
+    r"default description",
+    r"your tagline here",
+    r"sample page",
+    r"coming soon",
+    r"under construction",
+    r"my wordpress blog",
+    r"elementor wordpress theme",
+    r"site description",
+    r"insert description here",
+]
+
 def infer_brand_name(crawl_pages: List[Dict[str, Any]], brand_hint: Optional[str] = None) -> Optional[str]:
     """Infers the brand or project name from titles or URL domain."""
     if brand_hint and brand_hint.strip():
@@ -177,28 +192,58 @@ def detect_issues_from_data(
                             "evidence": [{"table": "crawl_pages", "id": pid, "field": "title", "value": title}],
                         })
 
-            # Missing Meta Description
-            if not meta_desc or len(meta_desc.strip()) == 0:
+            # Meta Description Rules (A-03: Placeholder, Short, Long, Missing)
+            clean_meta = meta_desc.strip() if meta_desc else ""
+            if not clean_meta:
                 candidates.append({
                     "type": "missing_meta_description",
                     "urls": [url],
                     "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": None}],
                 })
             else:
-                meta_len = len(meta_desc.strip())
-                if 161 <= meta_len <= 170:
+                clean_meta_lower = clean_meta.lower()
+                is_placeholder = any(re.search(pat, clean_meta_lower) for pat in PLACEHOLDER_PATTERNS)
+
+                # Heuristic relevance check
+                if not is_placeholder and len(clean_meta.split()) >= 3:
+                    page_terms = set(re.findall(r"[a-z0-9]+", f"{page.get('title', '')} {page.get('h1', '')}".lower()))
+                    meta_terms = set(re.findall(r"[a-z0-9]+", clean_meta_lower)) - {"the", "a", "an", "and", "or", "in", "on", "at", "to", "for", "with", "of", "is"}
+                    if page_terms and meta_terms and not (meta_terms & page_terms) and len(clean_meta) < 60:
+                        is_placeholder = True
+
+                if is_placeholder:
+                    candidates.append({
+                        "type": "meta_description_placeholder",
+                        "urls": [url],
+                        "severity": "high",
+                        "impact": f"Page displays generic theme or placeholder text ('{clean_meta}') instead of business copy in SERPs.",
+                        "fix_hint": "Replace theme placeholder with a tailored, business-relevant meta description (120–155 chars).",
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": clean_meta}],
+                    })
+
+                meta_len = len(clean_meta)
+                if meta_len < 70:
+                    candidates.append({
+                        "type": "meta_description_too_short",
+                        "urls": [url],
+                        "severity": "medium",
+                        "impact": f"Meta description is only {meta_len} characters (recommended: 120–155). Short descriptions fail to capture SERP CTR.",
+                        "fix_hint": "Expand meta description to 120–155 characters with service details and a clear call to action.",
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": f"{meta_len} chars: {clean_meta}"}],
+                    })
+                elif 161 <= meta_len <= 170:
                     candidates.append({
                         "type": "meta_borderline",
                         "urls": [url],
-                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": meta_desc}],
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": clean_meta}],
                     })
                 elif meta_len > 170:
                     candidates.append({
                         "type": "meta_too_long",
                         "urls": [url],
-                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": meta_desc}],
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": clean_meta}],
                     })
-                meta_to_pages[meta_desc.strip().lower()].append(page)
+                meta_to_pages[clean_meta_lower].append(page)
 
             # Missing H1
             if not h1 or len(h1.strip()) == 0:
@@ -282,21 +327,23 @@ def detect_issues_from_data(
                     "evidence": [{"table": "crawl_pages", "id": p["id"], "field": "canonical", "value": p.get("canonical")} for p in dom_pages],
                 })
 
-    # Duplicate Titles
+    # Duplicate Titles (A-05: Grouped with exact shared text)
     for t_text, plist in title_to_pages.items():
         if len(plist) > 1:
             candidates.append({
                 "type": "duplicate_title",
                 "urls": [p["url"] for p in plist],
+                "group_key": t_text,
                 "evidence": [{"table": "crawl_pages", "id": p["id"], "field": "title", "value": p.get("title")} for p in plist],
             })
 
-    # Duplicate Meta Descriptions
+    # Duplicate Meta Descriptions (A-05: Grouped with exact shared text)
     for m_text, plist in meta_to_pages.items():
         if len(plist) > 1:
             candidates.append({
                 "type": "duplicate_meta_description",
                 "urls": [p["url"] for p in plist],
+                "group_key": m_text,
                 "evidence": [{"table": "crawl_pages", "id": p["id"], "field": "meta_desc", "value": p.get("meta_desc")} for p in plist],
             })
 

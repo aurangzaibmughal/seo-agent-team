@@ -55,6 +55,18 @@ ISSUE_METADATA = {
         "impact": "Meta descriptions directly influence organic Click-Through-Rate (CTR) from SERPs even though not a direct ranking signal.",
         "fix_hint": "Craft a persuasive meta description between 70 and 155 characters with a compelling call-to-action."
     },
+    "meta_description_placeholder": {
+        "severity": "high",
+        "effort": "low",
+        "impact": "Page displays generic CMS/theme placeholder or demo text in SERPs, causing loss of user trust and disastrous Click-Through-Rate.",
+        "fix_hint": "Replace the theme default or placeholder tagline with unique, business-tailored copy between 120 and 155 characters."
+    },
+    "meta_description_too_short": {
+        "severity": "medium",
+        "effort": "low",
+        "impact": "Meta description is significantly under 70 characters, wasting valuable search snippet space and failing to attract clicks.",
+        "fix_hint": "Expand meta description to 120–155 characters highlighting unique value propositions and a clear call to action."
+    },
     "missing_h1": {
         "severity": "medium",
         "effort": "low",
@@ -189,6 +201,7 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
     "server_error_5xx": "high",
     "broken_link_4xx": "high",
     "canonical_mass_misconfiguration": "high",
+    "meta_description_placeholder": "high",
     "missing_title": "high",
     "low_performance_score": "high",
     "slow_lcp": "high",
@@ -200,6 +213,7 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
     "canonical_to_other": "medium",
     "indexable_private_page": "medium",
     "missing_canonical": "medium",
+    "meta_description_too_short": "medium",
     "duplicate_title": "medium",
     "missing_h1": "medium",
     "poor_cls": "medium",
