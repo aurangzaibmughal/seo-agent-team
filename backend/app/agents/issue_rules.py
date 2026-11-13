@@ -279,6 +279,18 @@ def detect_issues_from_data(
                     "evidence": [{"table": "crawl_pages", "id": pid, "field": "unmuted_autoplay_videos", "value": unmuted_vids}],
                 })
 
+            # Autoplay or heavy video above the fold
+            vids_above_fold = page.get("videos_above_fold") or []
+            if vids_above_fold:
+                candidates.append({
+                    "type": "autoplay_video_above_fold",
+                    "urls": [url],
+                    "severity": "medium",
+                    "impact": "Autoplay or heavy uncompressed video above the fold delays LCP and degrades mobile performance.",
+                    "fix_hint": "Replace above-the-fold autoplay video with a lightweight WebP poster image and lazy-load video.",
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "videos_above_fold", "value": vids_above_fold}],
+                })
+
             # Empty / hash links on legal or policy anchors
             empty_links = page.get("empty_legal_links") or []
             if empty_links:
@@ -332,12 +344,27 @@ def detect_issues_from_data(
 
             # Breadcrumbs on subpages
             path_depth = len([s for s in urlparse(url).path.strip("/").split("/") if s])
+            path_slugs = [s.lower() for s in urlparse(url).path.strip("/").split("/") if s]
             if status == 200 and page.get("indexable") and path_depth >= 1 and not page.get("has_breadcrumbs"):
                 candidates.append({
                     "type": "missing_breadcrumbs",
                     "urls": [url],
                     "evidence": [{"table": "crawl_pages", "id": pid, "field": "has_breadcrumbs", "value": False}],
                 })
+            elif status == 200 and page.get("breadcrumb_trail"):
+                bc_trail = [c.lower() for c in page["breadcrumb_trail"]]
+                if path_depth == 1 and len(bc_trail) >= 2:
+                    last_crumb = bc_trail[-1]
+                    current_slug = path_slugs[0].replace("-", " ")
+                    if current_slug not in last_crumb and last_crumb not in ("home", current_slug, "trips", "trip", "packages", "services", "tours", "blog"):
+                        candidates.append({
+                            "type": "mismatched_breadcrumb",
+                            "urls": [url],
+                            "severity": "medium",
+                            "impact": f"Breadcrumb trail ({' > '.join(page['breadcrumb_trail'])}) references an unrelated child page on a parent archive page.",
+                            "fix_hint": "Update the archive breadcrumb template so the breadcrumb displays the archive name rather than an unrelated child page.",
+                            "evidence": [{"table": "crawl_pages", "id": pid, "field": "breadcrumb_trail", "value": page["breadcrumb_trail"]}],
+                        })
 
             # Legal / trust links
             if status == 200 and not page.get("has_privacy_link") and not page.get("has_terms_link"):
@@ -362,6 +389,23 @@ def detect_issues_from_data(
                     "urls": [url],
                     "evidence": [{"table": "crawl_pages", "id": pid, "field": "url", "value": "URL served over insecure HTTP protocol"}],
                 })
+
+            # www vs non-www redirect / canonical hygiene
+            if canonical and url:
+                u_host = (urlparse(url).netloc or "").lower().split(":")[0]
+                c_host = (urlparse(canonical).netloc or "").lower().split(":")[0]
+                if u_host and c_host and u_host != c_host:
+                    u_is_www = u_host.startswith("www.")
+                    c_is_www = c_host.startswith("www.")
+                    if u_is_www != c_is_www and u_host.replace("www.", "") == c_host.replace("www.", ""):
+                        candidates.append({
+                            "type": "www_redirect_inconsistency",
+                            "urls": [url],
+                            "severity": "medium",
+                            "impact": f"Page served on {u_host} specifies canonical on {c_host}, causing mixed domain indexing and splitting link equity.",
+                            "fix_hint": "Implement a 301 redirect rule to normalize all traffic to either www or non-www consistently.",
+                            "evidence": [{"table": "crawl_pages", "id": pid, "field": "canonical", "value": f"URL {url} vs canonical {canonical}"}],
+                        })
 
             # Trailing slash redirect / canonical hygiene
             if canonical and url:

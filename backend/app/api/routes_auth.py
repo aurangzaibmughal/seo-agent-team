@@ -1,6 +1,5 @@
-from fastapi import APIRouter, HTTPException, Request, Response, Depends
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
 
 from app.core.config import settings
 from app.core.security import (

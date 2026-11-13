@@ -1,5 +1,4 @@
-import re
-from typing import Optional, List, Set, Tuple
+from typing import Optional, List
 from urllib.parse import urlparse, urljoin, parse_qsl, urlencode, unquote
 
 TRACKING_PARAM_PREFIXES = ("utm_", "mc_")

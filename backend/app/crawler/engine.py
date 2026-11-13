@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 import xml.etree.ElementTree as ET
-from typing import Set, List, Dict, Optional
+from typing import Set, List, Dict, Any
 from urllib.parse import urlparse
 import httpx
 
@@ -78,7 +78,7 @@ class AsyncCrawler:
         validate_safe_url(self.start_url)
         self.target_domain = urlparse(self.start_url).netloc
         self.max_pages = min(max_pages, settings.MAX_CRAWL_PAGES)
-        
+
         self.visited: Set[str] = set()
         self.to_visit: asyncio.Queue[str] = asyncio.Queue()
         self.semaphore = asyncio.Semaphore(settings.CRAWL_CONCURRENCY)
@@ -133,7 +133,7 @@ class AsyncCrawler:
 
             # 2. Run crawl workers
             workers = [asyncio.create_task(self._worker(client)) for _ in range(settings.CRAWL_CONCURRENCY)]
-            
+
             while self.crawled_count < self.max_pages:
                 if self.to_visit.empty() and self.active_workers == 0:
                     break
@@ -228,6 +228,7 @@ class AsyncCrawler:
             "in_sitemap_not_crawled": in_sitemap_not_crawled,
             "crawled_not_in_sitemap": crawled_not_in_sitemap,
             "failed_fetches_json": json.dumps(self.failed_fetches),
+            "dropped_pages_json": json.dumps(self.skipped_urls),
             "platform": platform,
             "platform_confidence": platform_conf,
             "detected_platform": platform,

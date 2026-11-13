@@ -1,10 +1,10 @@
 import os
 import csv
+import json
 import html
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -89,7 +89,7 @@ class ReportExporter:
 
         filename = f"SEO_Report_{job_id[:8]}.pdf"
         file_path = os.path.join(EXPORTS_DIR, filename)
-        
+
         doc = SimpleDocTemplate(file_path, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
         story = []
         styles = getSampleStyleSheet()
@@ -121,6 +121,25 @@ class ReportExporter:
 
         # Crawl Completeness & Health Breakdown Notice
         job_info = DBManager.get_job(job_id) or {}
+
+        # Report-Time QA Linter Gate (A-16): checks evidence, metric plausibility, and speed issue counts vs PSI table
+        from app.services.report_linter import lint_audit_report
+        strat_tasks = strategy_data.get("tasks", []) if strategy_data else []
+        rws = content_data.get("rewrites", []) if content_data else []
+        effective_psi = psi_data if psi_data is not None else (DBManager.get_psi_results(job_id) or [])
+        qa_warnings = lint_audit_report(
+            job=job_info,
+            tech_issues=verified_issues,
+            strategy_tasks=strat_tasks,
+            rewrites=rws,
+            psi_results=effective_psi,
+            code_bundle=code_data.get("bundle") if code_data else None
+        )
+        if qa_warnings:
+            print(f"[Report-Time Linter Gate] {len(qa_warnings)} QA warning(s) detected for job {job_id}:")
+            for w in qa_warnings:
+                print(f"  - {w}")
+
         pages_crawled = job_info.get("pages_crawled", len(crawl_pages or []))
         max_pages = job_info.get("max_pages", 100)
         sitemap_entries = []
@@ -139,6 +158,23 @@ class ReportExporter:
             except Exception:
                 inc_reasons = []
 
+        # Parse dropped / excluded pages with reasons
+        dropped_pages = []
+        raw_dropped = job_info.get("dropped_pages_json")
+        if raw_dropped:
+            try:
+                if isinstance(raw_dropped, str):
+                    dropped_pages = json.loads(raw_dropped)
+                elif isinstance(raw_dropped, list):
+                    dropped_pages = raw_dropped
+            except Exception:
+                dropped_pages = []
+        if not dropped_pages and crawl_pages:
+            for p in crawl_pages:
+                st = p.get("status_code", 200)
+                if st != 200:
+                    dropped_pages.append({"url": p.get("url"), "reason": f"HTTP {st}"})
+
         is_incomplete = comp_status == "possibly incomplete" or job_info.get("crawl_incomplete") == 1 or bool(inc_reasons)
         bg_col = colors.HexColor('#fef3c7') if is_incomplete else colors.HexColor('#f0fdf4')
         border_col = colors.HexColor('#f59e0b') if is_incomplete else colors.HexColor('#22c55e')
@@ -147,6 +183,11 @@ class ReportExporter:
         banner_text = f"<b>Crawl Breakdown:</b> {pages_crawled} HTML pages crawled (limit: {max_pages}) | {sitemap_cnt} sitemap URLs discovered | Status: {comp_status.upper()}"
         if inc_reasons:
             banner_text += f"<br/><b>Notes:</b> {'; '.join(inc_reasons)}"
+        if dropped_pages:
+            drop_summary = "; ".join(f"{d.get('url')} ({d.get('reason')})" for d in dropped_pages[:5])
+            if len(dropped_pages) > 5:
+                drop_summary += f" (+{len(dropped_pages) - 5} more)"
+            banner_text += f"<br/><b>Dropped / Excluded Pages ({len(dropped_pages)}):</b> {drop_summary}"
 
         inc_banner = Table([[Paragraph(banner_text, body_style)]], colWidths=[540])
         inc_banner.setStyle(TableStyle([
@@ -159,7 +200,7 @@ class ReportExporter:
         story.append(Spacer(1, 8))
 
         # Title
-        story.append(Paragraph(f"Executive SEO & Action Plan Report", title_style))
+        story.append(Paragraph("Executive SEO & Action Plan Report", title_style))
         story.append(Paragraph(f"Target Domain: <b>{target_url}</b> | Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", meta_style))
         story.append(Spacer(1, 10))
 
@@ -683,7 +724,7 @@ class ReportExporter:
                 writer.writerow(["### DEMO DATA ###", "This export was generated using seeded demonstration data", "", "", "", ""])
 
             writer.writerow(["SECTION", "ID_OR_KEY", "TYPE_OR_QUERY_OR_URL", "METRIC_1", "METRIC_2", "EXPLANATION_OR_DETAIL"])
-            
+
             # Length Tiers Summary
             t_bord = sum(len(i.get("urls", [])) for i in verified_issues if i.get("type") == "title_borderline")
             t_long = sum(len(i.get("urls", [])) for i in verified_issues if i.get("type") == "title_too_long")
@@ -737,7 +778,7 @@ class ReportExporter:
                             "Medium Severity",
                             "Crawled 200 indexable canonical page missing from sitemap.xml. Action: Add to sitemap."
                         ])
-            
+
             # Performance opportunities
             if performance_data:
                 for q in performance_data.get("striking_distance_queries", []):

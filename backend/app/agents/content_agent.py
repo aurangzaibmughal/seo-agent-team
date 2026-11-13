@@ -105,21 +105,21 @@ def is_standalone_meaningful_phrase(phrase: str) -> bool:
     words = phrase.strip().split()
     if len(words) < 2 or len(words) > 5:
         return False
-        
+
     # Must not end in a verb or stopword
     if words[-1].lower() in STOPWORDS_AND_VERBS_TRAILING:
         return False
-        
+
     # Must not begin with dangling interrogatives/subordinators
     first_lower = words[0].lower()
     if first_lower in {"why", "how", "what", "where", "when", "that", "which", "if", "and", "or", "the", "a", "an", "explore"}:
         return False
-        
+
     # Must not contain generic commands
     phrase_lower = phrase.lower()
     if any(cmd in phrase_lower for cmd in ["click here", "read more", "learn more", "view all", "find out", "check out"]):
         return False
-        
+
     return True
 
 def extract_brand_from_page(url: str, current_t: str = "", h1: str = "") -> str:
@@ -388,7 +388,7 @@ def compute_internal_link_suggestions(
 
     pages_200 = [p for p in crawl_pages if p.get("status_code") == 200 and is_eligible(p)]
     page_by_url = {p["url"].rstrip("/"): p for p in pages_200}
-    
+
     # Existing links lookup set: (source_key, target_key)
     existing_links = set()
     for l in crawl_links:
@@ -562,7 +562,7 @@ class ContentAgent:
             {"query": cl.get("head_term"), "page": cl.get("landing_pages", [""])[0]}
             for cl in research_snapshot.get("query_clusters", [])
         ]
-        
+
         # 1. Deterministic Internal Link Engine
         internal_links = compute_internal_link_suggestions(crawl_pages, crawl_links, gsc_queries)
 
@@ -670,9 +670,9 @@ class ContentAgent:
                     h1=f"Ultimate Guide to {term.title()}",
                     outline=[
                         f"Understanding {term.title()}",
-                        f"Key Benefits and Best Practices",
-                        f"Common Mistakes to Avoid",
-                        f"Strategic Implementation Plan"
+                        "Key Benefits and Best Practices",
+                        "Common Mistakes to Avoid",
+                        "Strategic Implementation Plan"
                     ],
                     questions_to_answer=q_list[:3],
                     schema_suggestion="Article" if intent == "informational" else "Product",
@@ -697,7 +697,7 @@ class ContentAgent:
                 t = p.get("title") or ""
                 m = p.get("meta_desc") or ""
                 url = p.get("url", "")
-                
+
                 is_title_duplicate = bool(t and title_counts[t.strip().lower()] > 1)
                 is_meta_duplicate = bool(m and meta_counts[m.strip().lower()] > 1)
 
@@ -760,7 +760,7 @@ class ContentAgent:
         model_name: str
     ) -> Tuple[ContentAgentReport, float, int, int]:
         real_questions = [q["query"] for q in research_snapshot.get("question_queries", []) if q.get("query")]
-        
+
         inputs = {
             "opportunities": [o.model_dump() for o in verified_research[:5]],
             "available_gsc_questions": real_questions[:10],

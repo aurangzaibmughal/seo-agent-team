@@ -82,3 +82,36 @@ async def test_a09_code_agent_wordpress_produces_artifacts_and_fix_instructions(
     assert "sitemap.xml" in artifact_paths
     assert "metadata_table.csv" in artifact_paths
     assert len(bundle.artifacts) >= 5
+
+def test_generate_fix_pack_reproducible_and_conforming():
+    fix_pack_path = Path(__file__).parent.parent.parent / "examples" / "alghaffar" / "FIX-PACK.md"
+    assert fix_pack_path.exists(), "examples/alghaffar/FIX-PACK.md must exist in repository"
+
+    content = fix_pack_path.read_text(encoding="utf-8")
+
+    # Confirm sections B-01 to B-19 exist
+    for i in range(1, 20):
+        b_key = f"B-{i:02d}"
+        assert b_key in content, f"Missing section {b_key} in FIX-PACK.md"
+
+    # B-06 must NOT contain 'unmuting' and must recommend poster/lazy-load/remove video
+    b06_part = content.split("## B-06:")[1].split("## B-07:")[0]
+    assert "unmuting" not in b06_part.lower()
+    assert "poster" in b06_part.lower()
+
+    # Must be hosting-agnostic (Apache/LiteSpeed, Nginx, Cloudflare)
+    assert "apache" in content.lower() or "litespeed" in content.lower()
+    assert "nginx" in content.lower()
+    assert "cloudflare" in content.lower()
+
+    # Must prefer Yoast/Rank Math and add duplicate-tag guard to functions.php
+    assert "yoast" in content.lower() or "rank math" in content.lower()
+    assert "guard" in content.lower() or "wpseo_options" in content.lower() or "rankmath" in content.lower()
+
+    # B-14 must match the site label "Trips"
+    b14_part = content.split("## B-14:")[1].split("## B-15:")[0]
+    assert "Home > Trips" in b14_part
+
+    # B-13 must be marked "Confirm with client"
+    b13_part = content.split("## B-13:")[1].split("## B-14:")[0]
+    assert "confirm with client" in b13_part.lower()

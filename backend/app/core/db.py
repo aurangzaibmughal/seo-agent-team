@@ -857,7 +857,7 @@ class DBManager:
         cursor.execute("SELECT * FROM crawl_pages WHERE job_id = ? ORDER BY created_at ASC LIMIT ?", (job_id, limit))
         rows = cursor.fetchall()
         conn.close()
-        
+
         result = []
         for r in rows:
             d = dict(r)
@@ -930,7 +930,7 @@ class DBManager:
         psi_data["id"] = psi_id
         if "fetched_at" not in psi_data:
             psi_data["fetched_at"] = datetime.now(timezone.utc).isoformat()
-        
+
         raw_obj = psi_data.get("raw_json") or {}
         if not isinstance(raw_obj, dict):
             try:
@@ -997,7 +997,7 @@ class DBManager:
         now = datetime.now(timezone.utc).isoformat()
         if "created_at" not in run_data:
             run_data["created_at"] = now
-            
+
         conn = get_sqlite_conn()
         cursor = conn.cursor()
         cursor.execute("""

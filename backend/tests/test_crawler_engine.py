@@ -1,6 +1,4 @@
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, patch, MagicMock
 from app.crawler.engine import AsyncCrawler
 from app.core.db import DBManager
 

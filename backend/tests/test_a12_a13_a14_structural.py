@@ -1,5 +1,3 @@
-import pytest
-from pathlib import Path
 from app.crawler.parser import parse_html_page
 from app.agents.issue_rules import detect_issues_from_data
 from app.agents.content_agent import compute_internal_link_suggestions
@@ -22,6 +20,18 @@ def test_a12_subdetector_href_hash_placeholder_links():
     p = parse_html_page(html, "https://example.com/", 200)
     issues = [i["type"] for i in detect_issues_from_data([p], [], [])]
     assert "broken_hash_link" in issues
+
+def test_a12_elementor_action_hash_not_flagged_as_broken_hash_link():
+    html = """<html><body>
+        <footer>
+            <a href="#elementor-action:action=popup:open&settings=eyJpZCI6Ijk0MTciLCJ0b2dnbGUiOmZhbHNlfQ==">Book Now</a>
+            <a href="#popup-contact">Open Popup</a>
+            <a href="#modal-quote">Request Quote</a>
+        </footer>
+    </body></html>"""
+    p = parse_html_page(html, "https://example.com/", 200)
+    issues = [i["type"] for i in detect_issues_from_data([p], [], [])]
+    assert "broken_hash_link" not in issues
 
 # 3. Image Alt + Format + Missing Width/Height
 def test_a12_subdetector_image_alt_format_dimensions():
@@ -103,6 +113,73 @@ def test_a12_subdetector_breadcrumbs_sanity():
     p_bc = parse_html_page(html_with_bc, "https://example.com/services/web-dev", 200)
     issues_bc = [i["type"] for i in detect_issues_from_data([p_bc], [], [])]
     assert "missing_breadcrumbs" not in issues_bc
+
+def test_a12_subdetector_mismatched_breadcrumb():
+    # Breadcrumb trail on /trip/ archive displays "Home > Sri Lanka" (unrelated child page)
+    html_mismatched = '''<html><body>
+        <nav aria-label="breadcrumb">
+            <ol>
+                <li><a href="/">Home</a></li>
+                <li><span>Sri Lanka</span></li>
+            </ol>
+        </nav>
+        <h1>Holiday Tour Packages</h1>
+    </body></html>'''
+    p_bad = parse_html_page(html_mismatched, "https://example.com/trip/", 200)
+    issues_bad = [i["type"] for i in detect_issues_from_data([p_bad], [], [])]
+    assert "mismatched_breadcrumb" in issues_bad
+
+    # Breadcrumb trail correctly matching the archive page "Home > Trips"
+    html_matched = '''<html><body>
+        <nav aria-label="breadcrumb">
+            <ol>
+                <li><a href="/">Home</a></li>
+                <li><span>Trips</span></li>
+            </ol>
+        </nav>
+        <h1>Holiday Tour Packages</h1>
+    </body></html>'''
+    p_good = parse_html_page(html_matched, "https://example.com/trip/", 200)
+    issues_good = [i["type"] for i in detect_issues_from_data([p_good], [], [])]
+    assert "mismatched_breadcrumb" not in issues_good
+
+def test_a12_subdetector_autoplay_heavy_video_above_fold():
+    html_autoplay = '''<html><body>
+        <div class="hero-section">
+            <video autoplay src="/media/hero-bg.mp4"></video>
+        </div>
+        <h1>Welcome to Tours</h1>
+    </body></html>'''
+    p_vid = parse_html_page(html_autoplay, "https://example.com/", 200)
+    issues_vid = [i["type"] for i in detect_issues_from_data([p_vid], [], [])]
+    assert "autoplay_video_above_fold" in issues_vid
+
+    html_good_vid = '''<html><body>
+        <div class="hero-section">
+            <video poster="/media/hero-poster.webp" src="/media/hero-bg.mp4"></video>
+        </div>
+        <h1>Welcome to Tours</h1>
+    </body></html>'''
+    p_good_vid = parse_html_page(html_good_vid, "https://example.com/", 200)
+    issues_good_vid = [i["type"] for i in detect_issues_from_data([p_good_vid], [], [])]
+    assert "autoplay_video_above_fold" not in issues_good_vid
+
+def test_a12_subdetector_www_vs_non_www_redirect_hygiene():
+    # Page served on apex example.com but canonical declares www.example.com
+    p_inconsistent = {
+        "id": "p1", "url": "https://example.com/trip/", "status_code": 200,
+        "canonical": "https://www.example.com/trip/", "indexable": True, "title": "Trips"
+    }
+    issues_inc = [i["type"] for i in detect_issues_from_data([p_inconsistent], [], [])]
+    assert "www_redirect_inconsistency" in issues_inc
+
+    # Consistent www domain on both
+    p_consistent = {
+        "id": "p2", "url": "https://www.example.com/trip/", "status_code": 200,
+        "canonical": "https://www.example.com/trip/", "indexable": True, "title": "Trips"
+    }
+    issues_con = [i["type"] for i in detect_issues_from_data([p_consistent], [], [])]
+    assert "www_redirect_inconsistency" not in issues_con
 
 # 10. Noindex vs Canonical Conflicts
 def test_a12_subdetector_noindex_canonical_conflicts():

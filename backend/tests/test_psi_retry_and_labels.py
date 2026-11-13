@@ -1,22 +1,16 @@
 import pytest
 import asyncio
 import os
-import csv
 import openpyxl
-from reportlab.pdfgen import canvas
 import httpx
 
 from app.core.db import DBManager
 from app.services.pagespeed import run_psi_for_url, run_pagespeed_pipeline
 from app.services.reporter import ReportExporter
 from app.agents.content_agent import (
-    clean_anchor_text,
-    extract_candidate_anchor,
     is_standalone_meaningful_phrase,
     compute_internal_link_suggestions,
-    rewrite_natural_meta,
-    fix_term_capitalization,
-    ContentAgent
+    rewrite_natural_meta
 )
 from app.models.agent_schemas import OnPageRewrite
 
@@ -82,7 +76,6 @@ async def test_psi_status_set_to_partial_with_url_and_reason(monkeypatch):
     })
 
     # Run pipeline with transport returning FAILED_DOCUMENT_REQUEST
-    import app.services.pagespeed as psi_mod
     orig_client = httpx.AsyncClient
 
     def get_test_client(*args, **kwargs):

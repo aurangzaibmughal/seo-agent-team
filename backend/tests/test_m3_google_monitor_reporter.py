@@ -1,8 +1,7 @@
-import pytest
 import os
 import openpyxl
 from app.core.security import encrypt_token, decrypt_token
-from app.services.google_data import parse_gsc_rows, parse_ga4_rows, calculate_gsc_periods
+from app.services.google_data import parse_gsc_rows, parse_ga4_rows
 from app.services.performance_metrics import compute_performance_metrics, calculate_pct_change
 from app.agents.verifier import Verifier
 from app.models.agent_schemas import MonitorFinding

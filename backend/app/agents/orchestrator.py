@@ -1,8 +1,7 @@
 import asyncio
-import time
 import json
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List, Set
+from typing import Optional, List, Set
 
 from app.core.config import settings
 from app.core.db import DBManager, get_sqlite_conn
@@ -21,7 +20,7 @@ from app.agents.code_verifier import CodeVerifier
 from app.agents.verifier import Verifier
 from app.services.reporter import ReportExporter
 from app.services.performance_metrics import compute_performance_metrics
-from app.models.agent_schemas import TechnicalIssue, MonitorFinding, ResearchOpportunity
+from app.models.agent_schemas import MonitorFinding
 
 def is_cancelled(job_id: str) -> bool:
     j = DBManager.get_job(job_id)
@@ -117,7 +116,7 @@ async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, projec
         # -------------------------------------------------------------
         DBManager.update_job(job_id, {"status": "analysing", "current_step": "analysing_technical"})
         crawl_pages = DBManager.get_crawl_pages(job_id, limit=2000)
-        
+
         conn = get_sqlite_conn()
         c = conn.cursor()
         c.execute("SELECT * FROM crawl_links WHERE job_id = ?", (job_id,))
@@ -213,7 +212,7 @@ async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, projec
         if competitor_domains:
             for c_dom in competitor_domains[:3]:
                 comp_tasks.append(CompetitorCrawler(job_id, c_dom, max_pages=30).run())
-        
+
         if comp_tasks:
             try:
                 await asyncio.gather(*comp_tasks, return_exceptions=True)

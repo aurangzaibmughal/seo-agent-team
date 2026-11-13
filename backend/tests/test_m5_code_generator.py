@@ -5,9 +5,9 @@ import pytest
 from unittest.mock import patch
 
 from app.models.agent_schemas import (
-    TechnicalIssue, StrategyTask, StrategyTaskSourceRef, StrategyReport,
+    TechnicalIssue, StrategyReport,
     TechnicalAgentReport, ContentAgentReport,
-    OnPageRewrite, InternalLinkSuggestion, GeneratedArtifact, CodeBundleReport
+    OnPageRewrite, GeneratedArtifact
 )
 from app.code_generator.filepath_mapper import map_url_to_nextjs_path
 from app.code_generator.jsonld_builder import JsonLdBuilder, safe_jsonld_string
@@ -704,7 +704,6 @@ def test_internal_links_drop_non_topical_terms():
 # 17. Every rewrite current_title and current_meta must equal crawl_pages
 def test_every_rewrite_current_text_equals_crawl_pages():
     from app.agents.content_agent import ContentAgent
-    from app.models.agent_schemas import ResearchOpportunity
 
     crawl_pages = [
         {

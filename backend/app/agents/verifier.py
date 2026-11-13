@@ -1,7 +1,6 @@
 import re
 import difflib
 from typing import List, Dict, Any, Optional, Tuple, Set
-from datetime import datetime, timezone
 from collections import defaultdict
 from app.core.db import DBManager
 from app.models.agent_schemas import (
@@ -9,7 +8,7 @@ from app.models.agent_schemas import (
     MonitorFinding, MonitorVerifierReport,
     ResearchOpportunity, ResearchVerifierReport,
     StrategyTask, StrategyVerifierReport,
-    ContentAgentReport, ContentVerifierReport, ContentBrief, OnPageRewrite, InternalLinkSuggestion
+    ContentAgentReport, ContentVerifierReport, OnPageRewrite
 )
 from app.agents.content_agent import (
     extract_preserved_entities,
@@ -58,7 +57,7 @@ def extract_numbers_from_text(text: str) -> List[float]:
 def collect_all_snapshot_numbers(snapshot: Dict[str, Any]) -> Set[float]:
     """Flattens all numeric values from snapshot data for traceability verification."""
     nums = set()
-    
+
     def _walk(obj):
         if isinstance(obj, dict):
             for v in obj.values():
@@ -351,7 +350,7 @@ class Verifier:
                 row = pages_by_id.get(row_id)
                 if not row:
                     return False, f"Referenced row '{row_id}' in crawl_pages does not exist in database."
-                
+
                 status = row.get("status_code", 0)
                 title = row.get("title")
                 meta_desc = row.get("meta_desc")
@@ -395,12 +394,12 @@ class Verifier:
                         return False, "Claim false: Utility/private pages (login, signup, admin, cart) SHOULD be noindex; not an issue."
                 elif issue.type == "indexable_admin_page":
                     if row.get("indexability_status") in ("noindex_meta", "noindex_header"):
-                        return False, f"Claim false: Admin page is properly noindexed."
+                        return False, "Claim false: Admin page is properly noindexed."
                     if not is_admin_page(row.get("url")):
                         return False, f"Claim false: URL '{row.get('url')}' is not an admin portal."
                 elif issue.type == "indexable_private_page":
                     if row.get("indexability_status") in ("noindex_meta", "noindex_header"):
-                        return False, f"Claim false: Private page is properly noindexed."
+                        return False, "Claim false: Private page is properly noindexed."
                     if classify_page_type(row.get("url")) != "utility":
                         return False, f"Claim false: URL '{row.get('url')}' is a content page."
                 elif issue.type == "canonical_to_other":
@@ -495,7 +494,7 @@ class Verifier:
             stored_val = cls._lookup_field_value(snapshot, field)
             if stored_val is None:
                 return False, f"Field '{field}' does not exist in snapshot."
-            
+
             try:
                 if abs(float(val) - float(stored_val)) > 0.15:
                     return False, f"Value mismatch for field '{field}': claimed {val}, stored is {stored_val}."

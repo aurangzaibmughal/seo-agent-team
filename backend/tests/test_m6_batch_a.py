@@ -1,14 +1,11 @@
 import pytest
-import os
 import re
 import io
 import json
 import uuid
 from uuid import uuid4
-import sqlite3
-from typing import List, Dict, Any
 
-from app.agents.issue_rules import detect_issues_from_data, infer_brand_name
+from app.agents.issue_rules import detect_issues_from_data
 from app.agents.technical_agent import get_deterministic_severity
 from app.agents.strategist_agent import HUMAN_ISSUE_LABELS
 from app.agents.code_agent import CodeGeneratorAgent
@@ -17,7 +14,7 @@ from app.services.comparator import JobComparator
 from app.code_generator.packager import CodePackager
 from app.code_generator.templates import CodeTemplateEngine
 from app.models.agent_schemas import (
-    TechnicalIssue, StrategyTask, OnPageRewrite, InternalLinkSuggestion, GeneratedArtifact
+    TechnicalIssue, GeneratedArtifact
 )
 
 def test_brand_repeated_in_title_detection_and_escalation():

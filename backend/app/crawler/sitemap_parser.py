@@ -1,12 +1,11 @@
 import gzip
 import xml.etree.ElementTree as ET
 from typing import Set, List, Dict, Tuple, Optional
-from urllib.parse import urlparse
 from pydantic import BaseModel
 import httpx
 
 from app.core.security import safe_fetch_url
-from app.crawler.url_utils import normalize_url, canonical_url_key
+from app.crawler.url_utils import normalize_url
 
 COMMON_SITEMAP_PATHS = [
     "/sitemap.xml",
@@ -146,7 +145,7 @@ async def discover_and_parse_sitemaps(
                                     sitemaps_to_crawl.append(child)
                         else:
                             parse_errors += 1
-            except Exception as e:
+            except Exception:
                 parse_errors += 1
 
     if result.sitemap_urls or result.sitemaps_discovered:

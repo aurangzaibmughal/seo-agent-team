@@ -14,7 +14,7 @@ from app.code_generator.packager import CodePackager
 from app.models.agent_schemas import GeneratedArtifact
 
 async def main():
-    target_url = "https://webspire-agency.vercel.app/"
+    target_url = "https://agency-sandbox.example.com/"
     max_pages = 30
     is_demo = False
 
@@ -63,7 +63,7 @@ async def main():
     for p_path in target_paths:
         row = c.execute(
             "SELECT url, title, h1, status_code FROM crawl_pages WHERE job_id = ? AND (url = ? OR url LIKE ?)",
-            (job_id, f"https://webspire-agency.vercel.app{p_path}", f"%{p_path}")
+            (job_id, f"https://agency-sandbox.example.com{p_path}", f"%{p_path}")
         ).fetchone()
         if row:
             print(f"URL: {row['url']}")
@@ -119,7 +119,7 @@ async def main():
     # Generate Gated ZIP (include_unreviewed=False)
     zip_gated_bytes = CodePackager.generate_zip(
         job_id=job_id,
-        domain="webspire-agency.vercel.app",
+        domain="agency-sandbox.example.com",
         platform="nextjs",
         artifacts=artifacts,
         validation_results=code_out["code"]["verifier"]["results"],
@@ -136,7 +136,7 @@ async def main():
     # Generate Ungated ZIP (include_unreviewed=True)
     zip_ungated_bytes = CodePackager.generate_zip(
         job_id=job_id,
-        domain="webspire-agency.vercel.app",
+        domain="agency-sandbox.example.com",
         platform="nextjs",
         artifacts=artifacts,
         validation_results=code_out["code"]["verifier"]["results"],

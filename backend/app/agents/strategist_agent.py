@@ -3,7 +3,7 @@ import asyncio
 import random
 import re
 import httpx
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Tuple, Optional
 from app.core.config import settings
 from app.models.agent_schemas import (
     TechnicalIssue, MonitorFinding, ResearchOpportunity,

@@ -214,6 +214,7 @@ class JsonLdBuilder:
             return None, {}
 
         url = page.get("url", "")
+        parsed = urlparse(url)
         name = (homepage.get("title") or parsed.netloc or "Organization").split("|")[0].strip()
         schema: Dict[str, Any] = {
             "@context": "https://schema.org",

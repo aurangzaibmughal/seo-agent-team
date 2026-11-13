@@ -1,15 +1,12 @@
 import re
-from typing import Dict, Any, List, Optional, Tuple
-from urllib.parse import urljoin, urlparse
+from typing import Dict, Any, List, Optional
+from urllib.parse import urlparse
 from collections import Counter
 from bs4 import BeautifulSoup
 
 from app.crawler.url_utils import (
     normalize_url,
-    urls_compare_equal,
-    canonical_url_key,
-    detect_trailing_slash_convention,
-    filter_tracking_params
+    urls_compare_equal
 )
 
 DEFAULT_STOPWORDS = {
@@ -54,7 +51,7 @@ def parse_html_page(
 ) -> Dict[str, Any]:
     """Deterministic parser extracting SEO technical elements."""
     headers = headers or {}
-    
+
     # Check headers for X-Robots-Tag
     x_robots = (headers.get("x-robots-tag") or "").lower()
     has_header_noindex = "noindex" in x_robots
@@ -113,12 +110,21 @@ def parse_html_page(
         soup.find("meta", attrs={"name": re.compile(r"^twitter:(card|title|description)", re.I)})
     )
 
-    has_breadcrumbs = bool(
+    bc_container = (
         soup.find("nav", attrs={"aria-label": re.compile(r"breadcrumb", re.I)}) or
         soup.find(attrs={"class": re.compile(r"breadcrumb", re.I)}) or
-        soup.find(attrs={"id": re.compile(r"breadcrumb", re.I)}) or
+        soup.find(attrs={"id": re.compile(r"breadcrumb", re.I)})
+    )
+    has_breadcrumbs = bool(
+        bc_container or
         "breadcrumblist" in (soup.get_text() + str(soup.find_all("script"))).lower()
     )
+    breadcrumb_trail: List[str] = []
+    if bc_container:
+        for it in bc_container.find_all(["a", "span", "li"]):
+            t = it.get_text(strip=True)
+            if t and t not in (">", "/", "\\", "»", "›", "-") and t not in breadcrumb_trail:
+                breadcrumb_trail.append(t)
 
     has_privacy_link = False
     has_terms_link = False
@@ -151,9 +157,30 @@ def parse_html_page(
         if v.has_attr("autoplay") and not v.has_attr("muted")
     ]
 
+    # Detect autoplay or heavy video above the fold (in hero/header/banner or near top)
+    videos_above_fold = []
+    for v in videos:
+        parent_tags = [p.name.lower() for p in v.parents]
+        parent_classes = " ".join([str(c) for p in v.parents for c in p.get("class", [])]).lower()
+        parent_ids = " ".join([str(p.get("id", "")) for p in v.parents]).lower()
+        is_above_fold = (
+            "header" in parent_tags
+            or any(k in parent_classes or k in parent_ids for k in ["hero", "banner", "header", "top", "slider"])
+            or (soup.body and v in list(soup.body.children)[:5])
+        )
+        if is_above_fold and (v.has_attr("autoplay") or not v.get("poster")):
+            videos_above_fold.append({
+                "src": v.get("src") or (v.find("source").get("src") if v.find("source") else "inline_video"),
+                "autoplay": v.has_attr("autoplay"),
+                "has_poster": bool(v.get("poster"))
+            })
+
     empty_legal_links = []
     for a in soup.find_all("a"):
         href = (a.get("href") or "").strip()
+        # Exclude Elementor actions and popup triggers
+        if href.startswith("#elementor-action") or "elementor-action:" in href or href.startswith("#popup") or href.startswith("#modal"):
+            continue
         anchor_text = a.get_text(strip=True).lower()
         if href in ("#", "", "javascript:void(0)", "javascript:;"):
             if any(k in anchor_text for k in ["privacy", "terms", "condition", "policy", "disclaimer", "refund"]):
@@ -162,7 +189,7 @@ def parse_html_page(
     # Word count and term extraction
     for tag in soup(["script", "style", "noscript", "svg", "head"]):
         tag.decompose()
-    
+
     text_content = soup.get_text(separator=" ", strip=True)
     body_text = text_content[:20000]
     words = [w for w in re.split(r"\s+", text_content) if len(w) > 1]
@@ -172,7 +199,7 @@ def parse_html_page(
     # Links Out with Anchor text
     outlinks_list: List[str] = []
     links_with_anchors: List[Dict[str, str]] = []
-    
+
     for a in soup.find_all("a", href=True):
         href = a.get("href")
         anchor = re.sub(r"\s+", " ", a.get_text(separator=" ", strip=True)).strip()
@@ -226,12 +253,14 @@ def parse_html_page(
         "has_og": has_og,
         "has_twitter_card": has_twitter_card,
         "has_breadcrumbs": has_breadcrumbs,
+        "breadcrumb_trail": breadcrumb_trail,
         "has_privacy_link": has_privacy_link,
         "has_terms_link": has_terms_link,
         "images_missing_alt": images_missing_alt,
         "images_missing_dimensions": images_missing_dimensions,
         "images_non_modern": images_non_modern,
         "unmuted_autoplay_videos": unmuted_autoplay_videos,
+        "videos_above_fold": videos_above_fold,
         "empty_legal_links": empty_legal_links,
     }
 

@@ -24,7 +24,7 @@ def test_a18_platform_generality_nextjs_and_shopify():
     assert conf_shop >= 0.8
 
 def test_a18_anti_hardcoding_guard():
-    """Verifies that no client-specific brand names ('alghaffar', 'webspire') are hardcoded in production application code."""
+    """Verifies that no client-specific brand names ('alghaffar', 'webspire') are hardcoded in application code, templates, and configurations."""
     repo_root = Path(__file__).parent.parent.parent
     forbidden = ["alghaffar", "al-ghaffar", "webspire"]
     violations = []
@@ -34,12 +34,17 @@ def test_a18_anti_hardcoding_guard():
         repo_root / "frontend" / "src",
     ]
 
+    checked_extensions = (
+        ".py", ".ts", ".tsx", ".js", ".json", ".html",
+        ".md", ".j2", ".jinja", ".yml", ".yaml", ".sh", ".ps1", ".bat"
+    )
+
     for scan_dir in scan_dirs:
         if not scan_dir.exists():
             continue
         for root, _, files in os.walk(scan_dir):
             for file in files:
-                if file.endswith((".py", ".ts", ".tsx", ".js", ".json", ".html")):
+                if file.endswith(checked_extensions):
                     path = Path(root) / file
                     with open(path, "r", encoding="utf-8", errors="ignore") as f:
                         content = f.read().lower()
@@ -47,7 +52,7 @@ def test_a18_anti_hardcoding_guard():
                             if term in content:
                                 violations.append(f"{path}: contains forbidden client-specific term '{term}'")
 
-    assert not violations, f"Client-specific hardcoding detected in production codebase:\n" + "\n".join(violations)
+    assert not violations, "Client-specific hardcoding detected in production codebase:\n" + "\n".join(violations)
 
 def test_a19_documentation_and_changelog():
     """Verifies that CHANGELOG.md, report-qa-checklist.md, and known-limitations.md exist and document hardening fixes."""

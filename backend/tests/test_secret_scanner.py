@@ -85,4 +85,4 @@ def test_no_hardcoded_secrets_in_tracked_files():
         except Exception:
             pass
 
-    assert not leaks, f"Hardcoded credentials/secrets detected in tracked repository files:\n" + "\n".join(leaks)
+    assert not leaks, "Hardcoded credentials/secrets detected in tracked repository files:\n" + "\n".join(leaks)

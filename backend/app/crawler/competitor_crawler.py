@@ -1,15 +1,14 @@
 import re
 import json
 import asyncio
-import time
-from typing import List, Dict, Any, Set
-from urllib.parse import urlparse, urljoin
+from typing import List, Set
+from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
 import httpx
 from bs4 import BeautifulSoup
 from app.core.db import DBManager
 from app.crawler.parser import normalize_url, is_internal_url, parse_html_page
-from app.core.security import validate_safe_url, safe_fetch_url, SSRFSecurityError
+from app.core.security import validate_safe_url, safe_fetch_url
 
 COMPETITOR_USER_AGENT = "Mozilla/5.0 (compatible; SEOAgentTeamCompetitorBot/1.0; +https://seo-agent-team.local)"
 
@@ -131,7 +130,7 @@ class CompetitorCrawler:
 
                     # Strict polite rate limit (at least 1.0 second delay)
                     await asyncio.sleep(1.0)
-                except Exception as e:
+                except Exception:
                     await asyncio.sleep(1.0)
                     continue
 

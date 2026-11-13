@@ -1,6 +1,5 @@
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
-from typing import Dict, Any, List, Optional
 from app.core.config import settings
 from app.core.db import DBManager
 from app.services.google_auth import (

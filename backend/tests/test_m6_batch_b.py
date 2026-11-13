@@ -1,12 +1,9 @@
-import os
 import io
 import csv
-import json
 from uuid import uuid4
 from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -15,9 +12,7 @@ from app.core.db import DBManager, get_sqlite_conn
 from app.services.asana_service import AsanaService
 from app.agents.orchestrator import check_cost_caps
 from app.agents.technical_agent import TechnicalAgent
-from app.agents.research_agent import ResearchAgent
 from app.agents.strategist_agent import StrategistAgent
-from app.models.agent_schemas import TechnicalIssue, MonitorFinding, ResearchOpportunity
 
 client = TestClient(app)
 

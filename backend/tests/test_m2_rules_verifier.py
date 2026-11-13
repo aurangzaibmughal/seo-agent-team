@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from unittest.mock import AsyncMock, patch
 from app.agents.issue_rules import detect_issues_from_data
 from app.agents.verifier import Verifier
@@ -229,7 +228,7 @@ async def test_psi_simulated_timeout_does_not_break_job(monkeypatch):
 @pytest.mark.asyncio
 async def test_technical_agent_fallback_on_503_retries(monkeypatch):
     from app.agents.technical_agent import TechnicalAgent
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock
 
     candidates = [{
         "type": "broken_link_4xx",

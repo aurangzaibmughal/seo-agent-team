@@ -190,7 +190,7 @@ class CodeVerifier:
     def _validate_robots_txt(cls, content: str, crawl_pages: List[Dict[str, Any]]) -> Tuple[str, Optional[str]]:
         # Remove comments
         lines = [line.strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("#")]
-        
+
         has_user_agent = any(l.lower().startswith("user-agent:") for l in lines)
         has_sitemap = any(l.lower().startswith("sitemap:") for l in lines)
 

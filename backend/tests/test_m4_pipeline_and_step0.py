@@ -1,12 +1,10 @@
 import os
-import json
 import pytest
-import asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timezone
 
 from app.core.config import settings
-from app.core.security import encrypt_token, decrypt_token, get_cipher
+from app.core.security import encrypt_token, decrypt_token
 from app.core.db import DBManager
 from app.agents.issue_rules import detect_issues_from_data
 from app.agents.research_metrics import compute_research_metrics, classify_intent
@@ -14,8 +12,7 @@ from app.agents.content_agent import compute_internal_link_suggestions
 from app.crawler.competitor_crawler import CompetitorCrawler
 from app.models.agent_schemas import (
     TechnicalIssue, StrategyTask, StrategyTaskSourceRef,
-    ContentAgentReport, ContentBrief, OnPageRewrite, InternalLinkSuggestion,
-    ResearchOpportunity
+    ContentAgentReport, ContentBrief, OnPageRewrite, InternalLinkSuggestion
 )
 from app.agents.verifier import Verifier
 from app.services.reporter import ReportExporter
@@ -976,7 +973,8 @@ def test_strategist_task_titles_use_real_urls_from_evidence():
 
 def test_all_issue_rule_types_covered_in_severity_table():
     """Fails if any rule type from issue_rules.py is missing from DETERMINISTIC_SEVERITY_TABLE."""
-    import inspect, re
+    import inspect
+    import re
     from app.agents import issue_rules
     from app.agents.technical_agent import DETERMINISTIC_SEVERITY_TABLE
 
@@ -1044,7 +1042,6 @@ def test_internal_links_natural_phrases_and_stopwords_and_term_frequency():
 
 def test_rewrites_near_duplicate_and_no_change_needed_and_seo_friendly():
     """Tests rewrites near-duplicate >0.6 rejected/differentiated, fine text gets 'no change needed', SEO-Friendly kept."""
-    import difflib
     from app.agents.content_agent import ContentAgent
     from app.models.agent_schemas import OnPageRewrite, ContentAgentReport
     from app.agents.verifier import Verifier
@@ -1172,7 +1169,7 @@ def test_anchors_full_h1_title_when_six_words_or_fewer():
     """Tests that anchor uses full H1/title when <= 6 words, avoids mid-sentence cuts, and verifier allows up to 6 words."""
     from app.agents.content_agent import clean_anchor_text, extract_candidate_anchor
     from app.agents.verifier import Verifier
-    from app.models.agent_schemas import ContentAgentReport, InternalLinkSuggestion
+    from app.models.agent_schemas import ContentAgentReport
 
     # 4-word title used in full
     cand = extract_candidate_anchor("Custom Next.js Web Development")
@@ -1210,9 +1207,8 @@ def test_anchors_full_h1_title_when_six_words_or_fewer():
 @pytest.mark.asyncio
 async def test_crawler_failed_fetch_retry_and_incomplete_logging():
     """Tests that crawler retries failed fetches once, logs persistent failures, and marks crawl_incomplete."""
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import patch
     from app.crawler.engine import AsyncCrawler
-    import httpx
 
     crawler = AsyncCrawler("job-test-fail", "https://example.com", max_pages=5)
 
@@ -1240,7 +1236,7 @@ async def test_crawler_failed_fetch_retry_and_incomplete_logging():
 @pytest.mark.asyncio
 async def test_psi_key_missing_reports_exact_error_and_status():
     """Tests that when PSI_API_KEY is missing, PSI reports 'key missing' exact error."""
-    from unittest.mock import AsyncMock, patch, MagicMock
+    from unittest.mock import patch
     from app.services.pagespeed import run_psi_for_url
     from app.core.config import settings
 
@@ -1264,7 +1260,7 @@ async def test_psi_key_missing_reports_exact_error_and_status():
 @pytest.mark.asyncio
 async def test_psi_429_retries_with_backoff_and_succeeds():
     """Tests that on 429/5xx, PSI retries with backoff and populates results on success."""
-    from unittest.mock import AsyncMock, patch, MagicMock
+    from unittest.mock import patch
     from app.services.pagespeed import run_psi_for_url
     from app.core.config import settings
 
@@ -1307,7 +1303,7 @@ async def test_psi_429_retries_with_backoff_and_succeeds():
 @pytest.mark.asyncio
 async def test_psi_429_exhausted_retries_reports_quota_exceeded():
     """Tests that when PSI retries are exhausted with an API key, it reports 'quota exceeded'."""
-    from unittest.mock import AsyncMock, patch, MagicMock
+    from unittest.mock import patch
     from app.services.pagespeed import run_psi_for_url
     from app.core.config import settings
 
@@ -1334,7 +1330,6 @@ async def test_psi_429_exhausted_retries_reports_quota_exceeded():
 def test_never_cache_failed_psi_results():
     """Tests that DBManager.get_psi_cached never returns failed PSI results."""
     from app.core.db import DBManager
-    from datetime import datetime, timezone
     import uuid
 
     test_url = f"https://example.com/test-cache-{uuid.uuid4().hex[:6]}"

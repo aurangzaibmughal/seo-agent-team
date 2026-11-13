@@ -1,11 +1,10 @@
 import json
 import csv
-import io
 import os
 from typing import Dict, Any, List, Optional, Tuple, Set
 from urllib.parse import urlparse
 from app.core.classification import classify_page_type
-from app.core.db import DBManager, get_sqlite_conn
+from app.core.db import DBManager
 
 def normalize_url(u: str) -> str:
     """Normalizes URL for deterministic matching across jobs."""
@@ -374,7 +373,7 @@ class JobComparator:
         h2_style = ParagraphStyle("H2Style", parent=styles["Heading2"], fontSize=13, textColor=colors.HexColor("#312e81"), spaceBefore=12, spaceAfter=6)
         body_style = ParagraphStyle("BodyStyle", parent=styles["Normal"], fontSize=9, leading=12, textColor=colors.HexColor("#1f2937"))
 
-        elements.append(Paragraph(f"SEO Before / After Audit Comparison", title_style))
+        elements.append(Paragraph("SEO Before / After Audit Comparison", title_style))
         elements.append(Paragraph(f"<b>Target Domain:</b> {comparison.get('target_url')}<br/><b>Baseline Job:</b> {comparison['before_job_id']}<br/><b>Follow-up Job:</b> {comparison['after_job_id']}", body_style))
         elements.append(Spacer(1, 10))
 

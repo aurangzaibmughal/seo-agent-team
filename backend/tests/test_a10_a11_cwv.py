@@ -51,14 +51,46 @@ def test_cwv_lcp_boundary_values():
 
 def test_score_and_metrics_consistency():
     from app.services.pagespeed import check_metric_consistency
-    # LCP 11.3s with score 71 is inconsistent!
-    res = check_metric_consistency(performance_score=71, lcp_ms=11330.0, cls=0.399)
-    assert res["is_consistent"] is False
-    assert "inconsistent" in res["reason"].lower()
+    # Score 71 with LCP 11.3s is mathematically possible in Lighthouse v10 (LCP weight 25% -> max score 75)
+    # and must NOT be flagged or re-run
+    res_possible = check_metric_consistency(performance_score=71, lcp_ms=11330.0, cls=0.399)
+    assert res_possible["is_consistent"] is True
 
-    # Score 71 with LCP 2.8s is consistent
+    # Score 80 with LCP 11.3s exceeds theoretical maximum (75) and must be flagged
+    res_impossible = check_metric_consistency(performance_score=80, lcp_ms=11330.0, cls=0.399)
+    assert res_impossible["is_consistent"] is False
+    assert "exceeds the theoretical maximum" in res_impossible["reason"]
+
+    # Score 71 with LCP 2.8s is well within range and consistent
     res2 = check_metric_consistency(performance_score=71, lcp_ms=2800.0, cls=0.08)
     assert res2["is_consistent"] is True
+
+@pytest.mark.asyncio
+async def test_pipeline_calls_compute_median_psi_results_with_n_runs(monkeypatch):
+    from unittest.mock import MagicMock
+    from app.services import pagespeed
+
+    mock_db = MagicMock()
+    mock_db.get_crawl_pages.return_value = [{"url": "https://example.com", "status_code": 200, "inlinks_count": 5}]
+    monkeypatch.setattr(pagespeed, "DBManager", mock_db)
+
+    calls = []
+    async def mock_run_psi(client, job_id, url, strategy="mobile", ignore_cache=True):
+        calls.append((strategy, len(calls)))
+        return {
+            "job_id": job_id, "url": url, "strategy": strategy,
+            "performance_score": 70 + len(calls),
+            "lcp_ms": 3000.0, "cls": 0.05, "fcp_ms": 1500.0, "ttfb_ms": 400.0
+        }
+    monkeypatch.setattr(pagespeed, "run_psi_for_url", mock_run_psi)
+
+    await pagespeed.run_pagespeed_pipeline("test-job-psi", "https://example.com", ignore_cache=True, n_runs=3)
+
+    # Must have called run_psi 3 times for mobile and 3 times for desktop (total 6 calls >= 3 per strategy)
+    mobile_calls = [c for c in calls if c[0] == "mobile"]
+    desktop_calls = [c for c in calls if c[0] == "desktop"]
+    assert len(mobile_calls) >= 3
+    assert len(desktop_calls) >= 3
 
 def test_median_of_n_runs_calculation():
     from app.services.pagespeed import compute_median_psi_results

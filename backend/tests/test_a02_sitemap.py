@@ -1,14 +1,9 @@
 import gzip
 import pytest
-from unittest.mock import AsyncMock, MagicMock
-import httpx
 from app.crawler.sitemap_parser import (
-    parse_sitemap_xml,
-    discover_and_parse_sitemaps,
-    SitemapDiscoveryResult
+    parse_sitemap_xml
 )
 from app.agents.issue_rules import detect_issues_from_data
-from app.crawler.url_utils import canonical_url_key
 
 HEALTHY_SITEMAP_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

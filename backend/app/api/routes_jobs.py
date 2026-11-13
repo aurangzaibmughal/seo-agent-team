@@ -14,9 +14,7 @@ from app.core.config import settings
 from app.core.db import DBManager, get_sqlite_conn
 from app.agents.orchestrator import run_full_pipeline
 from app.agents.verifier import Verifier
-from app.agents.monitor_agent import MonitorAgent
 from app.services.reporter import ReportExporter
-from app.services.performance_metrics import compute_performance_metrics
 from app.core.security import validate_safe_url, SSRFSecurityError, job_creation_limiter, get_client_ip
 from fastapi import Request
 
@@ -57,7 +55,7 @@ async def create_job(payload: JobCreate, background_tasks: BackgroundTasks, requ
         fresh_psi=payload.fresh_psi
     )
     background_tasks.add_task(run_full_pipeline, job["id"], url, payload.max_pages, payload.project_id)
-    
+
     return {
         "status": "success",
         "message": "SEO audit pipeline initiated",
@@ -130,7 +128,7 @@ async def get_page_inlinks(job_id: str, page_id: str):
     page = DBManager.get_crawl_page_by_id(page_id)
     if not page or page["job_id"] != job_id:
         raise HTTPException(status_code=404, detail="Page not found")
-    
+
     inlinks = DBManager.get_inlinks_for_url(job_id, page["url"])
     return {
         "url": page["url"],
@@ -347,7 +345,7 @@ async def export_report_file(job_id: str, format_type: str):
     runs = DBManager.get_agent_runs(job_id)
     ver_run = next((r for r in runs if r["agent"] == "verifier"), None)
     v_issues = ver_run["output_json"].get("verified_issues", []) if ver_run else []
-    
+
     perf = DBManager.get_performance_snapshot(job_id)
     p_data = perf["snapshot_json"] if perf else None
 
@@ -403,17 +401,17 @@ async def get_job_stats(job_id: str):
 
     total = len(pages)
     status_200_pages = [p for p in pages if p["status_code"] == 200]
-    
+
     status_200 = len(status_200_pages)
     status_3xx = sum(1 for p in pages if 300 <= p["status_code"] < 400)
     status_4xx = sum(1 for p in pages if 400 <= p["status_code"] < 500)
     status_5xx = sum(1 for p in pages if p["status_code"] >= 500)
-    
+
     missing_title = sum(1 for p in status_200_pages if not p.get("title") or len(p["title"].strip()) == 0)
     missing_meta = sum(1 for p in status_200_pages if not p.get("meta_desc") or len(p["meta_desc"].strip()) == 0)
     missing_h1 = sum(1 for p in status_200_pages if not p.get("h1") or len(p["h1"].strip()) == 0)
     non_indexable = sum(1 for p in pages if not p.get("indexable", True))
-    
+
     titles = [p["title"].strip() for p in status_200_pages if p.get("title")]
     title_counts = Counter(titles)
     duplicate_titles = sum(count for title, count in title_counts.items() if count > 1)

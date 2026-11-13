@@ -78,7 +78,7 @@ add_action('wp_head', function() {
 ## B-06: Largest Contentful Paint (LCP) Optimization (HIGH) [Verified]
 - **Issue:** Mobile LCP exceeded 4.0s (reported 11.3s on unthrottled runs) due to autoplaying uncompressed video and large JPEG images.
 - **Resolution:**
-  1. Remove autoplay on `Hajj-Umrah.mp4` above the fold on mobile devices; provide a compressed WebP poster image with user-click-to-play.
+  1. Remove autoplay on `Hajj-Umrah.mp4` above the fold on mobile devices; provide a lightweight compressed WebP poster image (`poster="hero-poster.webp"`), lazy-load or remove the heavy video element, or play only upon explicit user interaction.
   2. Compress destination hero images (`morocco.jpg`, `rome.jpg`, `paris.jpg`, `london.jpg`) to responsive WebP (`< 150 KB`).
   3. Preload above-the-fold hero image in `header.php`:
      ```html
@@ -117,10 +117,19 @@ add_action('wp_head', function() {
 - **Issue:** Destination page URL contains a misspelled slug: `/destinations/kuala-kumpur/`.
 - **Resolution:**
   1. Rename post/taxonomy slug in WordPress to `kuala-lumpur`.
-  2. Add permanent 301 redirect to root `.htaccess`:
-     ```apache
-     Redirect 301 /destinations/kuala-kumpur/ https://www.alghaffar.com.pk/destinations/kuala-lumpur/
-     ```
+  2. Implement permanent 301 redirect using your hosting environment:
+     - **Apache / LiteSpeed (`.htaccess`):**
+       ```apache
+       Redirect 301 /destinations/kuala-kumpur/ https://www.alghaffar.com.pk/destinations/kuala-lumpur/
+       ```
+     - **Nginx (`nginx.conf`):**
+       ```nginx
+       location = /destinations/kuala-kumpur/ {
+           return 301 https://www.alghaffar.com.pk/destinations/kuala-lumpur/;
+       }
+       ```
+     - **Cloudflare (Redirect Rules):**
+       Rule: `(http.request.uri.path eq "/destinations/kuala-kumpur/")` -> Redirect 301 to `https://www.alghaffar.com.pk/destinations/kuala-lumpur/`.
   3. Update internal links in the `/trip/` archive template.
 
 ---
@@ -148,25 +157,31 @@ add_action('wp_head', function() {
 
 ---
 
-## B-13: Trip Price Currency Formatting [Verified]
-- **Issue:** Tour packages on `/trip/` display `$ 99,000`, `$ 109,000`, which are PKR amounts prefixed with a dollar sign.
-- **Resolution:** In trip post type custom fields or Elementor loop templates, change currency prefix from `$` to `PKR ` or `Rs. ` (e.g., `PKR 99,000`).
+## B-13: Trip Price Currency Formatting [Verified - Confirm with Client]
+- **Issue:** Tour packages on `/trip/` display `$ 99,000`, `$ 109,000`, which appear to be PKR amounts prefixed with a dollar sign.
+- **Resolution (Confirm with client first):** Confirm with client whether tour packages are priced in PKR or USD before updating. Once confirmed, update the currency symbol in the custom post type template or Elementor loop from `$` to `PKR ` or `Rs. ` (e.g., `PKR 99,000`).
 
 ---
 
 ## B-14: Breadcrumb Navigation Fix on Trip Archive [Verified]
 - **Issue:** Archive page `/trip/` displays faulty breadcrumbs (`Home / Sri Lanka` instead of `Home / Trips`).
-- **Resolution:** In Yoast/Rank Math breadcrumbs settings or Elementor theme builder breadcrumb widget, configure Custom Post Type archive trail to display:
-  `Home > Tour Packages`.
+- **Resolution:** In Yoast / Rank Math breadcrumbs settings or Elementor theme builder breadcrumb widget, configure Custom Post Type archive trail to match the site label "Trips":
+  `Home > Trips`.
 
 ---
 
 ## B-15: Structured Data (Schema.org JSON-LD) [Check]
 - **Issue:** Missing `TravelAgency` and `Organization` structured data.
-- **Resolution:** Add JSON-LD schema via child theme `functions.php`:
+- **Resolution:**
+  1. **Preferred Method (Plugin GUI):** Configure Organization / Local Business Schema directly in Yoast SEO or Rank Math under **SEO -> Search Appearance -> Schema / Knowledge Graph**.
+  2. **Code Snippet Method (`functions.php` or `mu-plugins/seo-schema.php`):** If adding programmatically, include a duplicate-tag guard to avoid clashing with active SEO plugins:
 
 ```php
 add_action('wp_head', function() {
+    // Guard: Prevent duplicate schema if Yoast, Rank Math, or another schema provider is active
+    if (class_exists('WPSEO_Options') || class_exists('RankMath')) {
+        return;
+    }
     $schema = [
         "@context" => "https://schema.org",
         "@type" => "TravelAgency",
@@ -196,12 +211,22 @@ add_action('wp_head', function() {
 - **Issue:** Missing social meta tags and insecure protocol handling.
 - **Resolution:**
   - Configure Yoast / Rank Math social tab with 1200x630px default sharing banner.
-  - Enforce HTTPS and canonical trailing slashes in root `.htaccess`:
-    ```apache
-    RewriteEngine On
-    RewriteCond %{HTTPS} off
-    RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
-    ```
+  - Enforce HTTPS and canonical trailing slashes across your hosting layer:
+    - **Apache / LiteSpeed (`.htaccess`):**
+      ```apache
+      RewriteEngine On
+      RewriteCond %{HTTPS} off
+      RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+      ```
+    - **Nginx (`nginx.conf`):**
+      ```nginx
+      server {
+          listen 80;
+          server_name alghaffar.com.pk www.alghaffar.com.pk;
+          return 301 https://www.alghaffar.com.pk$request_uri;
+      }
+      ```
+    - **Cloudflare:** Enable "Always Use HTTPS" and create an Edge Redirect Rule.
 
 ---
 

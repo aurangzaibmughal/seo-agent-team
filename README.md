@@ -67,7 +67,7 @@ flowchart TD
 
 > [!NOTE]
 > **Snapshot Date:** November 8, 2026  
-> **Target URL:** `https://webspire-agency.vercel.app/`  
+> **Target URL:** `https://demo-agency.vercel.app/`  
 > **Benchmark Jobs:**  
 > - **Job `78ecbb30` (Full Pipeline Run):** Crawled 28 URLs total (27 returning HTTP 200, 1 returning HTTP 404). Detected 7 stale sitemap URLs and 9 missing indexable pages.  
 > - **Job `8aac96bd` (Cancel/Resume Run):** Crawled 15 URLs (all 15 returning HTTP 200; job was cancelled during PageSpeed and resumed).  
@@ -82,7 +82,7 @@ flowchart TD
 - **Pipeline Execution Cost**: `$0.002036` (strictly within the `$0.25` per-job cap and `$2.00` daily cap).
 - **Generated Drop-In Code**:
   - `app/sitemap.ts` includes canonical fixes with post-fix notes.
-  - Root layout title shortened to &le; 60 characters: `"WebSpire | Pakistan's Trusted Digital & Web Agency"`.
+  - Root layout title shortened to &le; 60 characters: `"Digital Agency | Trusted Web & Digital Solutions"`.
   - Rewrite meta description trimmed from 178 characters to &le; 155 characters.
   - `llms.txt` generated conforming to specification with full URLs.
 

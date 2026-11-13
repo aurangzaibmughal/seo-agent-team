@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Tuple, Optional
 
 class PlatformDetector:
     """Deterministic platform detector for CMS and web frameworks."""

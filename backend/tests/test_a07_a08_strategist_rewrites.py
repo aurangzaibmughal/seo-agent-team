@@ -1,8 +1,7 @@
-import pytest
 from pathlib import Path
-from app.models.agent_schemas import TechnicalIssue, StrategyReport
+from app.models.agent_schemas import TechnicalIssue
 from app.agents.strategist_agent import StrategistAgent
-from app.agents.content_agent import ContentAgent, rewrite_natural_title, rewrite_natural_meta
+from app.agents.content_agent import ContentAgent
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 

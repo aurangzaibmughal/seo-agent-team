@@ -1,11 +1,8 @@
-import os
 import re
-import json
 import difflib
 from urllib.parse import urlparse
 from typing import List, Dict, Any, Tuple, Optional
 
-from app.core.config import settings
 from app.models.agent_schemas import (
     TechnicalIssue, StrategyTask, OnPageRewrite, InternalLinkSuggestion,
     GeneratedArtifact, CodeBundleReport
@@ -260,7 +257,7 @@ class CodeGeneratorAgent:
             home_rewrite = next((r for r in verified_rewrites if _get_rw_attr(r, "url").rstrip("/") == base_url.rstrip("/")), None)
             home_rw_title = _get_rw_attr(home_rewrite, "suggested_title")
             home_rw_meta = _get_rw_attr(home_rewrite, "suggested_meta")
-            
+
             # Shortened homepage title <= 60 chars keeping descriptor
             if home_rw_title and len(home_rw_title) <= 60:
                 short_title = home_rw_title

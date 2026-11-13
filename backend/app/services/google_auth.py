@@ -1,7 +1,6 @@
 import urllib.parse
 import httpx
-from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone
+from typing import Dict, Any, Optional
 from app.core.config import settings
 from app.core.security import encrypt_token, decrypt_token
 from app.core.db import DBManager

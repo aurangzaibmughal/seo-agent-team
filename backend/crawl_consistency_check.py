@@ -3,7 +3,7 @@ import json
 from app.crawler.engine import AsyncCrawler
 
 async def run_crawl(crawl_id: str, max_pages: int = 30):
-    crawler = AsyncCrawler(job_id=crawl_id, target_url="https://webspire-agency.vercel.app/", max_pages=max_pages)
+    crawler = AsyncCrawler(job_id=crawl_id, target_url="https://demo-agency.vercel.app/", max_pages=max_pages)
     await crawler.run()
     # Collect all visited URLs and failed fetches
     return list(crawler.visited), crawler.failed_fetches

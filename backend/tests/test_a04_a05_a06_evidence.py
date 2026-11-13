@@ -1,5 +1,4 @@
 from pathlib import Path
-import pytest
 from app.crawler.parser import parse_html_page
 from app.agents.issue_rules import detect_issues_from_data
 from app.services.reporter import ReportExporter
