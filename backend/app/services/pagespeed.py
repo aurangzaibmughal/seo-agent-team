@@ -8,6 +8,26 @@ from app.core.db import DBManager
 
 PSI_API_URL = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
 
+def check_metric_consistency(
+    performance_score: Optional[int],
+    lcp_ms: Optional[float],
+    cls: Optional[float]
+) -> Dict[str, Any]:
+    """Sanity check whether performance score and core metrics are mutually consistent.
+    In Lighthouse scoring curves, LCP has 25% weight. If LCP > 8000ms, LCP sub-score is ~0.
+    If LCP >= 8000ms, score cannot exceed 70.
+    """
+    if performance_score is None:
+        return {"is_consistent": True, "reason": ""}
+    
+    if lcp_ms is not None and lcp_ms >= 8000.0 and performance_score >= 70:
+        return {
+            "is_consistent": False,
+            "reason": f"LCP of {lcp_ms/1000:.1f}s is inconsistent with a Lighthouse score of {performance_score} (likely stale cache or run glitch)."
+        }
+    
+    return {"is_consistent": True, "reason": ""}
+
 async def run_psi_for_url(
     client: httpx.AsyncClient,
     job_id: str,

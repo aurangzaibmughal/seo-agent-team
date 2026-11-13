@@ -364,21 +364,51 @@ def detect_issues_from_data(
                 "evidence": [{"table": "psi_results", "id": psi_id, "field": "performance_score", "value": score}],
             })
 
-        if lcp is not None and lcp > 2500:
-            speed_issues_found = True
-            candidates.append({
-                "type": "slow_lcp",
-                "urls": [p_url],
-                "evidence": [{"table": "psi_results", "id": psi_id, "field": "lcp_ms", "value": lcp}],
-            })
+        # LCP rules (A-11: 3-band)
+        if lcp is not None:
+            if lcp > 4000:
+                speed_issues_found = True
+                candidates.append({
+                    "type": "slow_lcp",
+                    "urls": [p_url],
+                    "severity": "high",
+                    "impact": f"Largest Contentful Paint is {lcp/1000:.1f}s (poor, Google threshold > 4.0s), severely penalizing mobile organic rankings.",
+                    "fix_hint": "Preload hero images, remove autoplaying video above fold, and optimize server TTFB.",
+                    "evidence": [{"table": "psi_results", "id": psi_id, "field": "lcp_ms", "value": lcp}],
+                })
+            elif lcp > 2500:
+                speed_issues_found = True
+                candidates.append({
+                    "type": "lcp_needs_improvement",
+                    "urls": [p_url],
+                    "severity": "medium",
+                    "impact": f"Largest Contentful Paint is {lcp/1000:.1f}s (needs improvement, range 2.5s–4.0s).",
+                    "fix_hint": "Compress images to WebP/AVIF and optimize critical CSS.",
+                    "evidence": [{"table": "psi_results", "id": psi_id, "field": "lcp_ms", "value": lcp}],
+                })
 
-        if cls_val is not None and cls_val > 0.1:
-            speed_issues_found = True
-            candidates.append({
-                "type": "poor_cls",
-                "urls": [p_url],
-                "evidence": [{"table": "psi_results", "id": psi_id, "field": "cls", "value": cls_val}],
-            })
+        # CLS rules (A-11: 3-band)
+        if cls_val is not None:
+            if cls_val > 0.25:
+                speed_issues_found = True
+                candidates.append({
+                    "type": "poor_cls",
+                    "urls": [p_url],
+                    "severity": "high",
+                    "impact": f"Cumulative Layout Shift is {cls_val} (poor, Google threshold > 0.25), causing severe visual instability.",
+                    "fix_hint": "Add explicit width and height attributes to all images, sliders and embed containers.",
+                    "evidence": [{"table": "psi_results", "id": psi_id, "field": "cls", "value": cls_val}],
+                })
+            elif cls_val > 0.10:
+                speed_issues_found = True
+                candidates.append({
+                    "type": "cls_needs_improvement",
+                    "urls": [p_url],
+                    "severity": "low",
+                    "impact": f"Cumulative Layout Shift is {cls_val} (needs improvement, range 0.10–0.25).",
+                    "fix_hint": "Reserve aspect ratio space for dynamic widgets and web font loading.",
+                    "evidence": [{"table": "psi_results", "id": psi_id, "field": "cls", "value": cls_val}],
+                })
 
     if psi_results and not speed_issues_found:
         print("PSI ran, no speed issues found")

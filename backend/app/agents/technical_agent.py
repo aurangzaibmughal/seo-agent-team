@@ -176,10 +176,22 @@ ISSUE_METADATA = {
         "fix_hint": "Preload hero images, optimize server response times (TTFB), and implement CDN caching."
     },
     "poor_cls": {
+        "severity": "high",
+        "effort": "medium",
+        "impact": "Cumulative Layout Shift above 0.25 (poor threshold) creates severe visual instability for users during page load.",
+        "fix_hint": "Specify explicit width and height attributes on images/videos and reserve space for dynamic DOM widgets."
+    },
+    "lcp_needs_improvement": {
         "severity": "medium",
         "effort": "medium",
-        "impact": "Cumulative Layout Shift above 0.1 creates visual instability for users during page load.",
-        "fix_hint": "Specify explicit width and height attributes on images/videos and avoid injecting dynamic DOM elements above the fold."
+        "impact": "Largest Contentful Paint between 2.5s and 4.0s falls into Google's 'Needs Improvement' band.",
+        "fix_hint": "Optimize image assets, enable compression, and eliminate render-blocking resources."
+    },
+    "cls_needs_improvement": {
+        "severity": "low",
+        "effort": "low",
+        "impact": "Cumulative Layout Shift between 0.10 and 0.25 falls into Google's 'Needs Improvement' band.",
+        "fix_hint": "Specify aspect ratios on images and reserve container space before dynamic content renders."
     },
     "brand_repeated_in_title": {
         "severity": "medium",
@@ -205,6 +217,7 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
     "missing_title": "high",
     "low_performance_score": "high",
     "slow_lcp": "high",
+    "poor_cls": "high",
     "noindex_page": "high",
     "indexable_admin_page": "high",
 
@@ -216,7 +229,7 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
     "meta_description_too_short": "medium",
     "duplicate_title": "medium",
     "missing_h1": "medium",
-    "poor_cls": "medium",
+    "lcp_needs_improvement": "medium",
     "orphan_page": "medium",
     "brand_repeated_in_title": "medium",
     "sitemap_lists_non_existent_url": "medium",
@@ -225,6 +238,7 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
     "crawled_page_missing_from_sitemap": "medium",
 
     # Low base severity
+    "cls_needs_improvement": "low",
     "title_borderline": "low",
     "title_too_long": "low",
     "title_too_short": "low",
