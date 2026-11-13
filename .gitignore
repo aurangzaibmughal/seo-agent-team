@@ -1,10 +1,14 @@
 # Environment Variables & Secrets
 .env
-.env*.local
+.env*
 *.secret.key
 *.pem
 *.sqlite
 *.db
+oauth*.json
+credentials*.json
+*.zip
+seo-fixes-*.zip
 
 # Python
 backend/venv/
@@ -17,6 +21,7 @@ backend/*/*/__pycache__/
 backend/local_seo.db
 backend/exports/*
 !backend/exports/.gitkeep
+backend/scratch/
 
 # Node / Next.js
 frontend/node_modules/

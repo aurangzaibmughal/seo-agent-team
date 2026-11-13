@@ -23,7 +23,31 @@ from app.services.reporter import ReportExporter
 from app.services.performance_metrics import compute_performance_metrics
 from app.models.agent_schemas import TechnicalIssue, MonitorFinding, ResearchOpportunity
 
-async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, project_id: Optional[str] = None):
+def is_cancelled(job_id: str) -> bool:
+    j = DBManager.get_job(job_id)
+    return bool(j and j.get("status") == "cancelled")
+
+def check_cost_caps(job_id: str, current_cost: float) -> tuple[bool, str]:
+    daily_cost = DBManager.get_daily_cost_usd()
+    if current_cost >= settings.MAX_JOB_COST_USD:
+        reason = f"MAX_JOB_COST_USD reached (${current_cost:.4f} >= ${settings.MAX_JOB_COST_USD:.2f})"
+        try:
+            if DBManager.get_job(job_id):
+                DBManager.update_job(job_id, {"error": f"Cost cap reached: {reason}"})
+        except Exception:
+            pass
+        return True, reason
+    if daily_cost >= settings.DAILY_COST_CAP_USD:
+        reason = f"DAILY_COST_CAP_USD reached (${daily_cost:.4f} >= ${settings.DAILY_COST_CAP_USD:.2f})"
+        try:
+            if DBManager.get_job(job_id):
+                DBManager.update_job(job_id, {"error": f"Cost cap reached: {reason}"})
+        except Exception:
+            pass
+        return True, reason
+    return False, ""
+
+async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, project_id: Optional[str] = None, resume: bool = False):
     """
     Autonomous Multi-Agent SEO Pipeline (Milestone 1, 2, 3 & 4):
     1. Crawler Engine -> crawl_pages & crawl_links
@@ -56,19 +80,37 @@ async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, projec
         # -------------------------------------------------------------
         # Step 1: Crawler
         # -------------------------------------------------------------
-        DBManager.update_job(job_id, {"status": "crawling", "current_step": "crawling"})
-        crawler = AsyncCrawler(job_id=job_id, target_url=target_url, max_pages=max_pages)
-        await crawler.run()
+        if is_cancelled(job_id):
+            print(f"Pipeline cancelled before crawl for job {job_id}")
+            return
+
+        existing_pages = DBManager.get_crawl_pages(job_id, limit=2000) if resume else []
+        if resume and existing_pages:
+            print(f"Resuming job {job_id}: Reusing {len(existing_pages)} crawled pages.")
+        else:
+            DBManager.update_job(job_id, {"status": "crawling", "current_step": "crawling"})
+            crawler = AsyncCrawler(job_id=job_id, target_url=target_url, max_pages=max_pages)
+            await crawler.run()
 
         # -------------------------------------------------------------
         # Step 2: PageSpeed Insights
         # -------------------------------------------------------------
-        DBManager.update_job(job_id, {"status": "pagespeed", "current_step": "pagespeed"})
-        try:
-            await run_pagespeed_pipeline(job_id, target_url)
-        except Exception as e:
-            print(f"PSI non-fatal warning: {e}")
-            DBManager.update_job(job_id, {"psi_status": f"failed ({str(e)[:100]})"})
+        if is_cancelled(job_id):
+            print(f"Pipeline cancelled before PSI for job {job_id}")
+            return
+
+        existing_psi = DBManager.get_psi_results(job_id) if resume else []
+        if resume and existing_psi:
+            print(f"Resuming job {job_id}: Reusing PSI results.")
+        else:
+            DBManager.update_job(job_id, {"status": "pagespeed", "current_step": "pagespeed"})
+            try:
+                job_rec = DBManager.get_job(job_id)
+                ignore_cache = bool(job_rec.get("fresh_psi")) if job_rec else False
+                await run_pagespeed_pipeline(job_id, target_url, ignore_cache=ignore_cache)
+            except Exception as e:
+                print(f"PSI non-fatal warning: {e}")
+                DBManager.update_job(job_id, {"psi_status": f"failed ({str(e)[:100]})"})
 
         # -------------------------------------------------------------
         # Step 3: Rule-Based Issue Detector & Technical Agent
@@ -83,12 +125,34 @@ async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, projec
         conn.close()
 
         psi_results = DBManager.get_psi_results(job_id)
-        candidates = detect_issues_from_data(crawl_pages, crawl_links, psi_results)
+        job_record = DBManager.get_job(job_id) or {}
+        sitemap_entries = []
+        if job_record.get("sitemap_entries_json"):
+            try:
+                sitemap_entries = json.loads(job_record["sitemap_entries_json"])
+            except Exception:
+                sitemap_entries = []
+
+        candidates = detect_issues_from_data(
+            crawl_pages,
+            crawl_links,
+            psi_results,
+            sitemap_entries=sitemap_entries,
+        )
 
         tech_start = datetime.now(timezone.utc).isoformat()
-        tech_report, tech_mode, tech_cost, tech_failure_reason, tech_model_used = await TechnicalAgent.run(candidates)
+        if is_cancelled(job_id):
+            print(f"Pipeline cancelled before Technical Agent for job {job_id}")
+            return
+        cap_active, cap_reason = check_cost_caps(job_id, total_job_cost)
+        tech_report, tech_mode, tech_cost, tech_failure_reason, tech_model_used = await TechnicalAgent.run(
+            candidates,
+            force_fallback=cap_active
+        )
         tech_finish = datetime.now(timezone.utc).isoformat()
         total_job_cost += tech_cost
+        DBManager.update_job(job_id, {"cost_usd": total_job_cost})
+        cap_active, cap_reason = check_cost_caps(job_id, total_job_cost)
 
         DBManager.save_agent_run({
             "job_id": job_id,
@@ -265,13 +329,17 @@ async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, projec
         )
         research_snapshot_id = DBManager.save_research_snapshot(job_id, research_metrics)
 
+        cap_active, cap_reason = check_cost_caps(job_id, total_job_cost)
         res_start = datetime.now(timezone.utc).isoformat()
         res_report, res_mode, res_cost, res_err, res_model = await ResearchAgent.run(
             research_snapshot_id,
-            research_metrics
+            research_metrics,
+            force_fallback=cap_active
         )
         res_finish = datetime.now(timezone.utc).isoformat()
         total_job_cost += res_cost
+        DBManager.update_job(job_id, {"cost_usd": total_job_cost})
+        cap_active, cap_reason = check_cost_caps(job_id, total_job_cost)
 
         DBManager.save_agent_run({
             "job_id": job_id,
@@ -313,14 +381,18 @@ async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, projec
         # Step 8: Strategist Agent (M4)
         # -------------------------------------------------------------
         DBManager.update_job(job_id, {"status": "strategizing", "current_step": "strategizing"})
+        cap_active, cap_reason = check_cost_caps(job_id, total_job_cost)
         strat_start = datetime.now(timezone.utc).isoformat()
         strat_report, strat_mode, strat_cost, strat_err, strat_model = await StrategistAgent.run(
             verified_tech=verified_tech_issues,
             verified_perf=verified_perf_findings,
-            verified_research=verified_research_opps
+            verified_research=verified_research_opps,
+            force_fallback=cap_active
         )
         strat_finish = datetime.now(timezone.utc).isoformat()
         total_job_cost += strat_cost
+        DBManager.update_job(job_id, {"cost_usd": total_job_cost})
+        cap_active, cap_reason = check_cost_caps(job_id, total_job_cost)
 
         DBManager.save_agent_run({
             "job_id": job_id,
@@ -382,15 +454,22 @@ async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, projec
         # -------------------------------------------------------------
         DBManager.update_job(job_id, {"status": "content_generation", "current_step": "content_generation"})
         cont_start = datetime.now(timezone.utc).isoformat()
+        if is_cancelled(job_id):
+            print(f"Pipeline cancelled before Content Agent for job {job_id}")
+            return
+        cap_active, cap_reason = check_cost_caps(job_id, total_job_cost)
         cont_report, cont_mode, cont_cost, cont_err, cont_model = await ContentAgent.run(
             verified_research=verified_research_opps,
             crawl_pages=crawl_pages,
             crawl_links=crawl_links,
             research_snapshot=research_metrics,
-            competitor_pages=competitor_pages
+            competitor_pages=competitor_pages,
+            force_fallback=cap_active
         )
         cont_finish = datetime.now(timezone.utc).isoformat()
         total_job_cost += cont_cost
+        DBManager.update_job(job_id, {"cost_usd": total_job_cost})
+        cap_active, cap_reason = check_cost_caps(job_id, total_job_cost)
 
         DBManager.save_agent_run({
             "job_id": job_id,
@@ -567,6 +646,12 @@ async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, projec
         DBManager.save_report_record(job_id, pdf_path, "pdf")
         DBManager.save_report_record(job_id, csv_path, "csv")
         DBManager.save_report_record(job_id, xlsx_path, "xlsx")
+
+        # Milestone M6: Populate review items for owner approval workflow
+        try:
+            DBManager.populate_review_items_for_job(job_id)
+        except Exception as rev_err:
+            print(f"Warning: Failed to populate review items: {rev_err}")
 
         # Mark completed
         DBManager.update_job(job_id, {

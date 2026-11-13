@@ -9,11 +9,54 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from urllib.parse import urlparse
+from app.core.classification import classify_page_type
+from app.core.db import DBManager
 
 EXPORTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "exports")
 os.makedirs(EXPORTS_DIR, exist_ok=True)
 
 class ReportExporter:
+    @classmethod
+    def filter_by_review(
+        cls,
+        job_id: str,
+        items: List[Dict[str, Any]],
+        item_type: str,
+        include_unreviewed: bool = False
+    ) -> List[Dict[str, Any]]:
+        from app.core.db import DBManager
+        reviews = DBManager.get_review_items(job_id, item_type=item_type)
+        if not reviews:
+            return items
+
+        rev_map = {r["item_ref"]: r for r in reviews}
+        filtered = []
+        for itm in items:
+            ref = itm.get("id") or itm.get("url") or itm.get("file_path") or itm.get("type")
+            rev = rev_map.get(ref)
+            if not rev:
+                if include_unreviewed:
+                    itm["review_label"] = "[UNREVIEWED]"
+                    filtered.append(itm)
+                continue
+
+            st = rev.get("status", "pending")
+            if st in ("approved", "edited"):
+                if st == "edited" and rev.get("edited_payload"):
+                    merged = dict(itm)
+                    merged.update(rev["edited_payload"])
+                    merged["review_label"] = "[HUMAN-EDITED]"
+                    filtered.append(merged)
+                else:
+                    itm["review_label"] = "[APPROVED]"
+                    filtered.append(itm)
+            elif include_unreviewed and st == "pending":
+                itm["review_label"] = "[UNREVIEWED]"
+                filtered.append(itm)
+
+        return filtered
+
     @classmethod
     def generate_pdf(
         cls,
@@ -27,8 +70,22 @@ class ReportExporter:
         psi_data: Optional[List[Dict[str, Any]]] = None,
         code_data: Optional[Dict[str, Any]] = None,
         is_demo: bool = False,
-        agency_name: Optional[str] = None
+        agency_name: Optional[str] = None,
+        include_unreviewed: bool = False
     ) -> str:
+        # Filter items based on review status
+        verified_issues = cls.filter_by_review(job_id, verified_issues, "technical_issue", include_unreviewed)
+        if content_data and "rewrites" in content_data:
+            content_data = dict(content_data)
+            content_data["rewrites"] = cls.filter_by_review(job_id, content_data["rewrites"], "rewrite", include_unreviewed)
+        if strategy_data and "tasks" in strategy_data:
+            strategy_data = dict(strategy_data)
+            strategy_data["tasks"] = cls.filter_by_review(job_id, strategy_data["tasks"], "strategy_task", include_unreviewed)
+        if code_data and "bundle" in code_data and "artifacts" in code_data["bundle"]:
+            code_data = dict(code_data)
+            code_data["bundle"] = dict(code_data["bundle"])
+            code_data["bundle"]["artifacts"] = cls.filter_by_review(job_id, code_data["bundle"]["artifacts"], "code_artifact", include_unreviewed)
+
         filename = f"SEO_Report_{job_id[:8]}.pdf"
         file_path = os.path.join(EXPORTS_DIR, filename)
         
@@ -60,6 +117,29 @@ class ReportExporter:
         header_text = agency_name if agency_name else "SEO Agent Team — Autonomous Multi-Agent Platform"
         story.append(Paragraph(f"<b>{header_text}</b>", meta_style))
         story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#e2e8f0'), spaceAfter=8))
+
+        # Completeness Guard Notice
+        job_info = DBManager.get_job(job_id)
+        if job_info and (job_info.get("completeness_status") == "possibly incomplete" or job_info.get("crawl_incomplete") == 1):
+            inc_reasons = []
+            if job_info.get("incomplete_reasons_json"):
+                try:
+                    inc_reasons = json.loads(job_info["incomplete_reasons_json"])
+                except Exception:
+                    inc_reasons = []
+            warn_msg = f"NOTICE: Crawl is possibly incomplete: {'; '.join(inc_reasons) if inc_reasons else 'Pages dropped or sitemap URLs omitted'}"
+            inc_banner = Table([[warn_msg]], colWidths=[540])
+            inc_banner.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fef3c7')),
+                ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#92400e')),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#f59e0b')),
+                ('PADDING', (0, 0), (-1, -1), 5),
+            ]))
+            story.append(inc_banner)
+            story.append(Spacer(1, 8))
 
         # Title
         story.append(Paragraph(f"Executive SEO & Action Plan Report", title_style))
@@ -142,6 +222,53 @@ class ReportExporter:
         else:
             story.append(Paragraph("No technical issues identified.", body_style))
 
+        # Positive Note: Private utility pages correctly noindexed
+        crawl_pages = DBManager.get_crawl_pages(job_id, limit=2000)
+        private_noindexed = [
+            p.get("url") for p in crawl_pages
+            if classify_page_type(p.get("url")) == "utility"
+            and p.get("indexability_status") in ("noindex_meta", "noindex_header")
+        ]
+        if private_noindexed:
+            clean_paths = [urlparse(u).path for u in private_noindexed if u]
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(
+                f"<b>Positive Note:</b> Private pages correctly noindexed ({len(private_noindexed)} pages: {', '.join(clean_paths[:4])}). Prevents search engine indexing of private auth and utility routes.",
+                meta_style
+            ))
+
+        # Sitemap Comparison & Health Section
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("Sitemap Health & Discrepancy Comparison", h2_style))
+        sm_issues = [i for i in verified_issues if i.get("type") in ("sitemap_lists_non_existent_url", "crawled_page_missing_from_sitemap")]
+        if sm_issues:
+            sm_table_rows = [["Issue Type", "URL", "Severity", "Impact & Action"]]
+            for smi in sm_issues:
+                itype = smi.get("type")
+                sev_label = smi.get("severity", "").upper()
+                label = "Stale Sitemap URL (4xx/5xx)" if itype == "sitemap_lists_non_existent_url" else "Crawled Page Missing From Sitemap"
+                for u in smi.get("urls", []):
+                    action_txt = "Remove from sitemap.xml or publish live page" if itype == "sitemap_lists_non_existent_url" else "Add 200 OK indexable page to sitemap.xml"
+                    sm_table_rows.append([
+                        label,
+                        Paragraph(html.escape(u), body_style),
+                        sev_label,
+                        Paragraph(action_txt, body_style)
+                    ])
+            t_sm = Table(sm_table_rows, colWidths=[130, 220, 50, 140])
+            t_sm.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0f172a')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 7.5),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('PADDING', (0, 0), (-1, -1), 3),
+            ]))
+            story.append(t_sm)
+        else:
+            story.append(Paragraph("<i>Sitemap and crawl are 100% synchronized. No stale sitemap URLs or omitted indexable pages.</i>", body_style))
+
         story.append(Spacer(1, 10))
 
         # 2. Performance Section (GSC & GA4)
@@ -180,9 +307,14 @@ class ReportExporter:
                 cls_v = str(p.get("cls")) if p.get("cls") is not None else "N/A"
                 fcp = f"{p.get('fcp_ms')} ms" if p.get("fcp_ms") is not None else "N/A"
                 ttfb = f"{p.get('ttfb_ms')} ms" if p.get("ttfb_ms") is not None else "N/A"
+                dev_str = p.get("strategy", "").capitalize()
+                if p.get("is_cached"):
+                    m_time = p.get("cached_measured_at") or p.get("fetched_at") or ""
+                    clean_time = m_time[:19].replace("T", " ") if m_time else ""
+                    dev_str = f"{dev_str}<br/><font size='5.5' color='#64748b'>(cached, measured at {clean_time})</font>"
                 psi_rows.append([
                     Paragraph(html.escape(p.get("url", "")), body_style),
-                    p.get("strategy", "").capitalize(),
+                    Paragraph(dev_str, body_style),
                     sc,
                     lcp,
                     cls_v,
@@ -246,17 +378,21 @@ class ReportExporter:
 
         if briefs:
             story.append(Paragraph("<b>Target Content Briefs:</b>", meta_style))
-            b_rows = [["Cluster / Target", "Suggested Title (≤60)", "Suggested Meta (≤155)", "Outline / Questions"]]
+            b_rows = [["Cluster / Target", "Source (URL & Query)", "Suggested Title (≤60)", "Suggested Meta (≤155)", "Outline / Questions"]]
             for b in briefs[:3]:
                 outline_txt = ", ".join(b.get("outline", []))[:100]
                 q_txt = "<br/><b>Q:</b> " + "<br/><b>Q:</b> ".join(b.get("questions_to_answer", []))[:120] if b.get("questions_to_answer") else ""
+                s_url = html.escape(str(b.get("source_url") or b.get("target_url") or "GSC"))
+                s_txt = html.escape(str(b.get("source_text") or b.get("target_cluster") or ""))
+                src_html = f"<b>URL:</b> {s_url}<br/><b>Query:</b> {s_txt}"
                 b_rows.append([
                     Paragraph(f"<b>{b.get('target_cluster', '')}</b><br/>Intent: {b.get('intent', 'informational')}", body_style),
+                    Paragraph(src_html, body_style),
                     Paragraph(f"{b.get('suggested_title', '')} ({len(b.get('suggested_title', ''))} chars)", body_style),
                     Paragraph(f"{b.get('suggested_meta', '')} ({len(b.get('suggested_meta', ''))} chars)", body_style),
                     Paragraph(f"{outline_txt}{q_txt}", body_style)
                 ])
-            t_b = Table(b_rows, colWidths=[110, 130, 150, 150])
+            t_b = Table(b_rows, colWidths=[90, 110, 110, 115, 115])
             t_b.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -452,6 +588,29 @@ class ReportExporter:
                     f"Affected: {len(i.get('urls', []))}",
                     f"{i.get('impact')} | Fix: {i.get('fix_hint')}"
                 ])
+
+            # Sitemap Comparison Detailed Rows
+            for i in verified_issues:
+                if i.get("type") == "sitemap_lists_non_existent_url":
+                    for u in i.get("urls", []):
+                        writer.writerow([
+                            "Sitemap Stale URL",
+                            i.get("id"),
+                            u,
+                            "4xx/5xx/Uncrawlable",
+                            "High Severity" if len(i.get("urls", [])) >= 5 else "Medium Severity",
+                            "Declared in sitemap.xml but non-existent on server. Action: Remove from sitemap."
+                        ])
+                elif i.get("type") == "crawled_page_missing_from_sitemap":
+                    for u in i.get("urls", []):
+                        writer.writerow([
+                            "Sitemap Missing Page",
+                            i.get("id"),
+                            u,
+                            "200 OK",
+                            "Medium Severity",
+                            "Crawled 200 indexable canonical page missing from sitemap.xml. Action: Add to sitemap."
+                        ])
             
             # Performance opportunities
             if performance_data:
@@ -652,6 +811,34 @@ class ReportExporter:
                 i.get("impact"),
                 i.get("fix_hint")
             ])
+
+        # Sheet: Sitemap Comparison
+        ws_sm = wb.create_sheet(title="Sitemap Comparison")
+        ws_sm.append(["Category", "Issue ID", "Full URL", "Status / Details", "Action Required"])
+        has_sm_discrepancies = False
+        for i in verified_issues:
+            if i.get("type") == "sitemap_lists_non_existent_url":
+                has_sm_discrepancies = True
+                for u in i.get("urls", []):
+                    ws_sm.append([
+                        "Stale Sitemap URL",
+                        i.get("id"),
+                        u,
+                        "Returns 4xx/5xx or un-crawlable",
+                        "Remove URL from sitemap.xml or publish live page"
+                    ])
+            elif i.get("type") == "crawled_page_missing_from_sitemap":
+                has_sm_discrepancies = True
+                for u in i.get("urls", []):
+                    ws_sm.append([
+                        "Crawled Page Missing From Sitemap",
+                        i.get("id"),
+                        u,
+                        "200 OK, indexable, canonical to self",
+                        "Add clean URL to sitemap.xml / app/sitemap.ts"
+                    ])
+        if not has_sm_discrepancies:
+            ws_sm.append(["Notice", "-", "Sitemap is 100% synchronized with crawl", "No discrepancies found", "None"])
 
         # Sheet: Opportunities
         ws_opp = wb.create_sheet(title="Opportunities")

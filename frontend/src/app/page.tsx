@@ -27,6 +27,7 @@ import {
   BarChart3,
   Link2,
   LogOut,
+  Lock,
   Bug,
   Sparkles,
   Target,
@@ -37,7 +38,13 @@ import {
   Users,
   HelpCircle,
   Split,
-  Tag
+  Tag,
+  History,
+  Send,
+  Trash2,
+  Play,
+  StopCircle,
+  AlertCircle
 } from "lucide-react";
 
 interface CrawlPage {
@@ -73,6 +80,7 @@ interface TechnicalIssue {
   evidence: Array<{ table: string; id: string; field: string; value?: any }>;
   fix_hint: string;
   confidence: number;
+  source?: string;
 }
 
 interface VerifierReport {
@@ -171,10 +179,14 @@ interface JobStats {
   is_demo?: boolean;
   psi_mobile_score: number | null;
   psi_desktop_score: number | null;
+  psi_is_cached?: boolean;
+  psi_cached_measured_at?: string | null;
   issues_high: number;
   issues_medium: number;
   issues_low: number;
   crawl_incomplete?: boolean;
+  completeness_status?: string;
+  incomplete_reasons?: string[];
   failed_fetches?: Array<{ url: string; reason: string; timestamp: string }>;
   current_step: string;
   status: string;
@@ -199,6 +211,8 @@ interface JobStats {
   title_too_long_urls?: string[];
   meta_borderline_urls?: string[];
   meta_too_long_urls?: string[];
+  sitemap_stale_urls?: Array<{ url: string; status_code: number | string }>;
+  sitemap_missing_urls?: Array<{ url: string; title: string }>;
 }
 
 interface GeneratedArtifact {
@@ -252,7 +266,7 @@ interface Job {
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
-  "https://seo-agent-team-ac15f.containers.snapdeploy.app";
+  "http://localhost:8000";
 
 const PIPELINE_STEPS = [
   { key: "crawling", label: "Crawl" },
@@ -272,6 +286,7 @@ const PIPELINE_STEPS = [
 export default function Home() {
   const [targetUrl, setTargetUrl] = useState("https://webspire-agency.vercel.app");
   const [maxPages, setMaxPages] = useState(30);
+  const [freshPsi, setFreshPsi] = useState(false);
   const [competitorsInput, setCompetitorsInput] = useState("");
   const [isDemoMode, setIsDemoMode] = useState(false);
 
@@ -313,13 +328,55 @@ export default function Home() {
   const [selectedPlatform, setSelectedPlatform] = useState<string>("nextjs");
   const [selectedRouterType, setSelectedRouterType] = useState<string>("app");
   const [selectedArtifact, setSelectedArtifact] = useState<GeneratedArtifact | null>(null);
+  const [nextjsVersion, setNextjsVersion] = useState<string>("15+");
+
+  // Batch B: Asana modal state
+  const [showAsanaModal, setShowAsanaModal] = useState(false);
+  const [asanaStatus, setAsanaStatus] = useState<{ configured: boolean } | null>(null);
+  const [asanaWorkspaces, setAsanaWorkspaces] = useState<any[]>([]);
+  const [selectedAsanaWorkspace, setSelectedAsanaWorkspace] = useState<string>("");
+  const [asanaProjects, setAsanaProjects] = useState<any[]>([]);
+  const [selectedAsanaProject, setSelectedAsanaProject] = useState<string>("");
+  const [asanaStartDate, setAsanaStartDate] = useState<string>(new Date().toISOString().split("T")[0]);
+  const [asanaPreviewTasks, setAsanaPreviewTasks] = useState<any[] | null>(null);
+  const [asanaSyncResult, setAsanaSyncResult] = useState<any | null>(null);
+  const [asanaLoading, setAsanaLoading] = useState(false);
+
+  // Batch B: History modal state
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [jobsHistory, setJobsHistory] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyCompareA, setHistoryCompareA] = useState<string>("");
+  const [historyCompareB, setHistoryCompareB] = useState<string>("");
+  const [showCompareModal, setShowCompareModal] = useState(false);
+  const [comparisonData, setComparisonData] = useState<any | null>(null);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
   const [isUpdatingPlatform, setIsUpdatingPlatform] = useState(false);
+
+  // Stats Error & Polling Backoff state
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [pollIntervalMs, setPollIntervalMs] = useState<number>(1500);
 
   // Competitor data
   const [competitorPages, setCompetitorPages] = useState<any[]>([]);
 
   // Agent runs for Debug panel
   const [agentRuns, setAgentRuns] = useState<any[]>([]);
+
+  // Production Auth state
+  const [authStatus, setAuthStatus] = useState<{ authenticated: boolean; security_mode?: string } | null>(null);
+
+  const checkAuthStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/status`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setAuthStatus(data);
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
 
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<
@@ -347,8 +404,13 @@ export default function Home() {
 
   useEffect(() => {
     checkGoogleStatus();
+    checkAuthStatus();
     window.addEventListener("focus", checkGoogleStatus);
-    return () => window.removeEventListener("focus", checkGoogleStatus);
+    window.addEventListener("focus", checkAuthStatus);
+    return () => {
+      window.removeEventListener("focus", checkGoogleStatus);
+      window.removeEventListener("focus", checkAuthStatus);
+    };
   }, []);
 
   const handleConnectGoogle = async () => {
@@ -365,6 +427,193 @@ export default function Home() {
     await fetch(`${API_BASE}/api/google/disconnect`, { method: "POST" });
     setGoogleConnected(false);
     setGoogleEmail(null);
+  };
+
+  // Batch B: Orchestrator stage controls
+  const handleCancelJob = async () => {
+    if (!currentJob?.id) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${currentJob.id}/cancel`, { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentJob((prev) => prev ? { ...prev, status: "cancelled", current_step: "cancelled" } : null);
+        alert("Job cancelled successfully.");
+      }
+    } catch (e: any) {
+      alert("Failed to cancel job: " + e.message);
+    }
+  };
+
+  const handleResumeJob = async () => {
+    if (!currentJob?.id) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${currentJob.id}/resume`, { method: "POST" });
+      if (res.ok) {
+        alert("Job resumption started from last stage.");
+        setCurrentJob((prev) => prev ? { ...prev, status: "resuming" } : null);
+      }
+    } catch (e: any) {
+      alert("Failed to resume job: " + e.message);
+    }
+  };
+
+  // Batch B: Asana Handlers
+  const handleOpenAsanaModal = async () => {
+    if (!currentJob?.id) return;
+    setShowAsanaModal(true);
+    setAsanaLoading(true);
+    setAsanaSyncResult(null);
+    try {
+      const statusRes = await fetch(`${API_BASE}/api/asana/status`);
+      if (statusRes.ok) {
+        const sData = await statusRes.json();
+        setAsanaStatus(sData);
+        if (sData.configured) {
+          const wsRes = await fetch(`${API_BASE}/api/asana/workspaces`);
+          if (wsRes.ok) {
+            const wsData = await wsRes.json();
+            setAsanaWorkspaces(wsData.workspaces || []);
+            if (wsData.workspaces?.length) {
+              const firstWs = wsData.workspaces[0].gid;
+              setSelectedAsanaWorkspace(firstWs);
+              const pRes = await fetch(`${API_BASE}/api/asana/projects?workspace=${firstWs}`);
+              if (pRes.ok) {
+                const pData = await pRes.json();
+                setAsanaProjects(pData.projects || []);
+                if (pData.projects?.length) setSelectedAsanaProject(pData.projects[0].gid);
+              }
+            }
+          }
+        }
+      }
+
+      // Load dry-run preview mapping
+      const prevRes = await fetch(`${API_BASE}/api/asana/jobs/${currentJob.id}/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start_date: asanaStartDate })
+      });
+      if (prevRes.ok) {
+        const prevData = await prevRes.json();
+        setAsanaPreviewTasks(prevData.tasks || []);
+      }
+    } catch (e: any) {
+      console.error("Asana init error:", e);
+    } finally {
+      setAsanaLoading(false);
+    }
+  };
+
+  const handleAsanaWorkspaceChange = async (wsGid: string) => {
+    setSelectedAsanaWorkspace(wsGid);
+    try {
+      const pRes = await fetch(`${API_BASE}/api/asana/projects?workspace=${wsGid}`);
+      if (pRes.ok) {
+        const pData = await pRes.json();
+        setAsanaProjects(pData.projects || []);
+        if (pData.projects?.length) setSelectedAsanaProject(pData.projects[0].gid);
+      }
+    } catch (e: any) {
+      console.error(e);
+    }
+  };
+
+  const handleExecuteAsanaSync = async () => {
+    if (!currentJob?.id || !selectedAsanaWorkspace || !selectedAsanaProject) {
+      alert("Please select a workspace and project first.");
+      return;
+    }
+    setAsanaLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/asana/jobs/${currentJob.id}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspace_gid: selectedAsanaWorkspace,
+          project_gid: selectedAsanaProject,
+          start_date: asanaStartDate
+        })
+      });
+      const data = await res.json();
+      setAsanaSyncResult(data);
+      if (res.ok) {
+        alert(`Successfully synced ${data.synced_count} task(s) to Asana!`);
+      } else {
+        alert("Asana export error: " + (data.detail || "Unknown error"));
+      }
+    } catch (e: any) {
+      alert("Failed to export to Asana: " + e.message);
+    } finally {
+      setAsanaLoading(false);
+    }
+  };
+
+  // Batch B: History Handlers
+  const handleOpenHistory = async () => {
+    setShowHistoryModal(true);
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/history`);
+      if (res.ok) {
+        const data = await res.json();
+        setJobsHistory(data.jobs || []);
+      }
+    } catch (e: any) {
+      console.error("History fetch error:", e);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const handleDeleteJob = async (jobId: string) => {
+    if (!window.confirm(`Are you sure you want to permanently delete job ${jobId}? All crawl, PSI, agent analysis, and code data will be permanently purged.`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${jobId}?confirm=true`, { method: "DELETE" });
+      if (res.ok) {
+        setJobsHistory((prev) => prev.filter((j) => j.id !== jobId));
+        if (currentJob?.id === jobId) setCurrentJob(null);
+      } else {
+        const err = await res.json();
+        alert(`Failed to delete job: ${err.detail || "Confirmation rejected"}`);
+      }
+    } catch (e: any) {
+      alert("Failed to delete job: " + e.message);
+    }
+  };
+
+  const handleRunComparison = async () => {
+    if (!historyCompareA || !historyCompareB) return;
+    setComparisonLoading(true);
+    setShowCompareModal(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/compare?before_job_id=${historyCompareA}&after_job_id=${historyCompareB}`);
+      if (res.ok) {
+        const data = await res.json();
+        setComparisonData(data);
+      } else {
+        const err = await res.json();
+        alert(`Comparison failed: ${err.detail || "Error"}`);
+        setShowCompareModal(false);
+      }
+    } catch (e: any) {
+      alert(`Comparison error: ${e.message}`);
+      setShowCompareModal(false);
+    } finally {
+      setComparisonLoading(false);
+    }
+  };
+
+  const handleSelectJobFromHistory = async (jobId: string) => {
+    setShowHistoryModal(false);
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${jobId}`);
+      if (res.ok) {
+        const j = await res.json();
+        setCurrentJob(j);
+      }
+    } catch (e: any) {
+      console.error(e);
+    }
   };
 
   const handleCopy = (text: string, key: string) => {
@@ -411,7 +660,8 @@ export default function Home() {
           url: targetUrl.trim(),
           max_pages: Number(maxPages),
           competitor_domains: compList,
-          is_demo: isDemoMode,
+          is_demo: false,
+          fresh_psi: freshPsi,
         }),
       });
 
@@ -441,17 +691,25 @@ export default function Home() {
     }
   };
 
-  // Poll status & pipeline data
+  // Poll status & pipeline data with backoff on /stats failure
   useEffect(() => {
     if (!currentJob?.id) return;
     if (currentJob.status === "completed" || currentJob.status === "failed") return;
 
-    const interval = setInterval(async () => {
+    let timeoutId: NodeJS.Timeout;
+    let isCancelled = false;
+
+    const pollJob = async () => {
       try {
         const jobRes = await fetch(`${API_BASE}/api/jobs/${currentJob.id}`);
-        if (!jobRes.ok) return;
+        if (!jobRes.ok) {
+          if (!isCancelled) {
+            timeoutId = setTimeout(pollJob, pollIntervalMs);
+          }
+          return;
+        }
         const updatedJob: Job = await jobRes.json();
-        setCurrentJob(updatedJob);
+        if (!isCancelled) setCurrentJob(updatedJob);
 
         const [pagesRes, statsRes, issuesRes, perfRes, resRes, stratRes, contRes, compRes, runsRes, codeRes] = await Promise.all([
           fetch(`${API_BASE}/api/jobs/${currentJob.id}/pages`),
@@ -467,7 +725,16 @@ export default function Home() {
         ]);
 
         if (pagesRes.ok) setPages(await pagesRes.json());
-        if (statsRes.ok) setStats(await statsRes.json());
+        
+        if (statsRes.ok) {
+          setStats(await statsRes.json());
+          setStatsError(null);
+          setPollIntervalMs(1500); // Reset backoff on success
+        } else {
+          setStatsError(`Failed to fetch job stats: HTTP ${statsRes.status}`);
+          setPollIntervalMs((prev) => Math.min(prev * 2, 12000)); // Back off polling
+        }
+
         if (issuesRes.ok) {
           const payload = await issuesRes.json();
           if (payload.verifier) setVerifierData(payload.verifier);
@@ -527,29 +794,57 @@ export default function Home() {
         }
       } catch (err) {
         console.error("Polling error:", err);
+        setStatsError("Connection error while polling job data.");
+        setPollIntervalMs((prev) => Math.min(prev * 2, 12000));
+      } finally {
+        if (!isCancelled) {
+          timeoutId = setTimeout(pollJob, pollIntervalMs);
+        }
       }
-    }, 1500);
+    };
 
-    return () => clearInterval(interval);
-  }, [currentJob]);
+    timeoutId = setTimeout(pollJob, pollIntervalMs);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [currentJob?.id, currentJob?.status, pollIntervalMs]);
 
   // Final fetch on completion
   useEffect(() => {
     if (currentJob?.status === "completed" && currentJob.id) {
+      const safeJson = (url: string, fallback: any = {}) =>
+        fetch(url)
+          .then((r) => (r.ok ? r.json() : fallback))
+          .catch(() => fallback);
+
       Promise.all([
-        fetch(`${API_BASE}/api/jobs/${currentJob.id}/pages`).then((r) => r.json()),
-        fetch(`${API_BASE}/api/jobs/${currentJob.id}/stats`).then((r) => r.json()),
-        fetch(`${API_BASE}/api/jobs/${currentJob.id}/issues`).then((r) => r.json()),
-        fetch(`${API_BASE}/api/jobs/${currentJob.id}/performance`).then((r) => r.json()),
-        fetch(`${API_BASE}/api/jobs/${currentJob.id}/research`).then((r) => r.json()),
-        fetch(`${API_BASE}/api/jobs/${currentJob.id}/strategy`).then((r) => r.json()),
-        fetch(`${API_BASE}/api/jobs/${currentJob.id}/content`).then((r) => r.json()),
-        fetch(`${API_BASE}/api/jobs/${currentJob.id}/competitors`).then((r) => r.json()),
-        fetch(`${API_BASE}/api/jobs/${currentJob.id}/agent-runs`).then((r) => r.json()),
-        fetch(`${API_BASE}/api/jobs/${currentJob.id}/code-artifacts`).then((r) => r.json()),
+        safeJson(`${API_BASE}/api/jobs/${currentJob.id}/pages`, []),
+        fetch(`${API_BASE}/api/jobs/${currentJob.id}/stats`)
+          .then(async (r) => {
+            if (!r.ok) {
+              setStatsError(`Failed to fetch final job stats: HTTP ${r.status}`);
+              return null;
+            }
+            setStatsError(null);
+            return r.json();
+          })
+          .catch(() => {
+            setStatsError("Network error fetching final job stats.");
+            return null;
+          }),
+        safeJson(`${API_BASE}/api/jobs/${currentJob.id}/issues`, {}),
+        safeJson(`${API_BASE}/api/jobs/${currentJob.id}/performance`, {}),
+        safeJson(`${API_BASE}/api/jobs/${currentJob.id}/research`, {}),
+        safeJson(`${API_BASE}/api/jobs/${currentJob.id}/strategy`, {}),
+        safeJson(`${API_BASE}/api/jobs/${currentJob.id}/content`, {}),
+        safeJson(`${API_BASE}/api/jobs/${currentJob.id}/competitors`, {}),
+        safeJson(`${API_BASE}/api/jobs/${currentJob.id}/agent-runs`, {}),
+        safeJson(`${API_BASE}/api/jobs/${currentJob.id}/code-artifacts`, {}),
       ]).then(([p, s, i, perf, res, strat, cont, comp, runs, cData]) => {
-        setPages(p);
-        setStats(s);
+        if (Array.isArray(p)) setPages(p);
+        if (s) setStats(s);
         if (i.verifier) setVerifierData(i.verifier);
         if (i.technical_agent) setTechSummary(i.technical_agent.summary);
         if (i.mode) setAgentMode(i.mode);
@@ -587,20 +882,21 @@ export default function Home() {
     }
   }, [currentJob?.status, currentJob?.id]);
 
-  const handleUpdatePlatform = async (newPlatform: string, newRouter: string) => {
+  const handleUpdatePlatform = async (newPlatform: string, newRouter: string, newVer: string = nextjsVersion) => {
     if (!currentJob?.id) return;
     setIsUpdatingPlatform(true);
     try {
       const res = await fetch(`${API_BASE}/api/jobs/${currentJob.id}/platform`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: newPlatform, router_type: newRouter }),
+        body: JSON.stringify({ platform: newPlatform, router_type: newRouter, nextjs_version: newVer }),
       });
       if (res.ok) {
         const data = await res.json();
         setCodeBundleData({ bundle: data.bundle, verifier: data.verifier });
         setSelectedPlatform(data.platform);
         setSelectedRouterType(data.router_type);
+        setNextjsVersion(newVer);
         if (data.bundle?.artifacts?.length) {
           setSelectedArtifact(data.bundle.artifacts[0]);
         }
@@ -734,9 +1030,44 @@ export default function Home() {
             )}
 
             <span className="text-slate-500">|</span>
+            <button
+              onClick={handleOpenHistory}
+              className="flex items-center space-x-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-lg text-slate-300 transition"
+            >
+              <History className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Job History</span>
+            </button>
+
             <span className="flex items-center text-slate-400 font-mono">
               Cost: <strong className="ml-1 text-emerald-400">${stats?.cost_usd ? stats.cost_usd.toFixed(4) : "0.0000"}</strong>
             </span>
+
+            <span className="text-slate-500">|</span>
+            {authStatus?.authenticated ? (
+              <div className="flex items-center space-x-1.5 bg-indigo-950/60 border border-indigo-800/80 px-2.5 py-1 rounded-lg text-indigo-300">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Admin</span>
+                <button
+                  onClick={async () => {
+                    await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
+                    setAuthStatus({ authenticated: false });
+                    window.location.href = "/login";
+                  }}
+                  title="Sign out"
+                  className="hover:text-rose-400 ml-1 text-slate-400"
+                >
+                  <LogOut className="w-3 h-3" />
+                </button>
+              </div>
+            ) : (
+              <a
+                href="/login"
+                className="flex items-center space-x-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 px-2.5 py-1 rounded-lg text-slate-300 transition"
+              >
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <span>Sign In</span>
+              </a>
+            )}
           </div>
         </div>
       </header>
@@ -780,6 +1111,18 @@ export default function Home() {
                 />
               </div>
 
+              <div className="md:col-span-6 flex items-center space-x-2 pt-1 pb-1">
+                <label className="flex items-center space-x-2 text-xs text-slate-400 cursor-pointer hover:text-slate-200 select-none">
+                  <input
+                    type="checkbox"
+                    checked={freshPsi}
+                    onChange={(e) => setFreshPsi(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <span>Fresh PSI run (ignore 24h cache)</span>
+                </label>
+              </div>
+
               <div className="md:col-span-1">
                 <select
                   value={maxPages}
@@ -793,7 +1136,7 @@ export default function Home() {
                 </select>
               </div>
 
-              <div className="md:col-span-2 flex items-center space-x-2">
+              <div className="md:col-span-2 flex flex-col justify-center space-y-1">
                 <button
                   type="submit"
                   disabled={loading}
@@ -812,28 +1155,6 @@ export default function Home() {
                   )}
                 </button>
               </div>
-
-              <div className="col-span-12 flex items-center justify-between text-xs text-slate-400 pt-1">
-                <label className="flex items-center space-x-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={isDemoMode}
-                    onChange={(e) => setIsDemoMode(e.target.checked)}
-                    className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span>Run in <strong>Demo Mode</strong> (auto-seeds GSC/GA4 test data with prominent DEMO DATA watermark)</span>
-                </label>
-
-                {currentJob && (
-                  <button
-                    type="button"
-                    onClick={handleSeedDemo}
-                    className="text-amber-400 hover:text-amber-300 underline font-mono text-[11px]"
-                  >
-                    Seed Demo Data on current job
-                  </button>
-                )}
-              </div>
             </form>
           </div>
         </section>
@@ -846,8 +1167,54 @@ export default function Home() {
                 <GitCommit className="w-4 h-4 text-indigo-400" />
                 <span>Pipeline Stage: <strong className="text-white">{currentJob.current_step}</strong></span>
               </span>
-              <span className="text-xs text-slate-400 font-mono">Job ID: {currentJob.id.slice(0, 8)}...</span>
+              <div className="flex items-center space-x-2">
+                {["crawling", "pagespeed", "analysing", "fetching_data", "researching", "planning", "content_generation", "code_generation", "reporting", "running", "resuming"].includes(currentJob.status) && (
+                  <button
+                    onClick={handleCancelJob}
+                    className="px-2.5 py-1 bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 rounded text-xs transition flex items-center space-x-1"
+                  >
+                    <StopCircle className="w-3 h-3" />
+                    <span>Cancel Job</span>
+                  </button>
+                )}
+                {["interrupted", "failed", "cancelled"].includes(currentJob.status) && (
+                  <button
+                    onClick={handleResumeJob}
+                    className="px-2.5 py-1 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700 text-indigo-300 rounded text-xs transition flex items-center space-x-1"
+                  >
+                    <Play className="w-3 h-3" />
+                    <span>Resume Job</span>
+                  </button>
+                )}
+                <span className="text-xs text-slate-400 font-mono">Job ID: {currentJob.id.slice(0, 8)}...</span>
+              </div>
             </div>
+
+            {statsError && (
+              <div className="mb-3 p-3.5 rounded-xl bg-red-950/40 border border-red-500/40 text-red-300 flex items-center justify-between text-xs sm:text-sm shadow-lg">
+                <div className="flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                  <div>
+                    <span className="font-semibold text-red-200">Stats Error: </span>
+                    <span>{statsError}</span>
+                    {currentJob.status !== "completed" && (
+                      <span className="text-slate-400 ml-2 font-mono text-xs">
+                        (Polling backed off to {pollIntervalMs / 1000}s)
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setStatsError(null);
+                    setPollIntervalMs(1500);
+                  }}
+                  className="px-2 py-0.5 rounded bg-red-900/40 hover:bg-red-800/60 border border-red-700/50 text-red-200 text-xs transition"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 sm:grid-cols-5 md:grid-cols-10 gap-1.5">
               {PIPELINE_STEPS.map((step) => {
@@ -872,33 +1239,39 @@ export default function Home() {
         )}
 
         {/* Crawl Incomplete / Failed Fetches Banner */}
-        {stats && (stats.crawl_incomplete || (stats.failed_fetches && stats.failed_fetches.length > 0)) && (
+        {stats && (stats.crawl_incomplete || stats.completeness_status === "possibly incomplete" || (stats.failed_fetches && stats.failed_fetches.length > 0)) && (
           <section className="bg-amber-950/40 border border-amber-600/50 rounded-xl p-4 text-xs text-amber-200">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2 font-semibold text-amber-300 text-sm">
-                <span>⚠️ Crawl Incomplete</span>
-                <span className="text-[11px] bg-amber-900/60 text-amber-300 px-2 py-0.5 rounded border border-amber-700/50">
-                  {stats.failed_fetches?.length || 0} URL(s) failed after retry
-                </span>
+                <span>⚠️ Crawl Notice</span>
+                {stats.incomplete_reasons && stats.incomplete_reasons.length > 0 && (
+                  <span className="text-[11px] bg-amber-900/60 text-amber-300 px-2 py-0.5 rounded border border-amber-700/50">
+                    {stats.incomplete_reasons.join(" • ")}
+                  </span>
+                )}
               </div>
             </div>
-            <p className="text-amber-200/80 mb-2">
-              The following URL(s) failed on initial fetch and also failed upon automatic retry:
-            </p>
-            <div className="space-y-1.5 max-h-40 overflow-y-auto font-mono text-[11px] bg-slate-950/60 p-2.5 rounded-lg border border-amber-900/40">
-              {stats.failed_fetches && stats.failed_fetches.length > 0 ? (
-                stats.failed_fetches.map((f, idx) => (
-                  <div key={idx} className="flex items-center justify-between gap-2 text-slate-300">
-                    <span className="truncate">{f.url}</span>
-                    <span className="text-rose-400 bg-rose-950/50 px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap">
-                      {f.reason}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <div className="text-slate-400">Fetch failure logged in crawl engine.</div>
-              )}
-            </div>
+            {stats.failed_fetches && stats.failed_fetches.length > 0 ? (
+              <>
+                <p className="text-amber-200/80 mb-2">
+                  The following URL(s) failed on initial fetch and also failed upon automatic retry:
+                </p>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto font-mono text-[11px] bg-slate-950/60 p-2.5 rounded-lg border border-amber-900/40">
+                  {stats.failed_fetches.map((f, idx) => (
+                    <div key={idx} className="flex items-center justify-between gap-2 text-slate-300">
+                      <span className="truncate">{f.url}</span>
+                      <span className="text-rose-400 bg-rose-950/50 px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap">
+                        {f.reason}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="text-amber-200/80">
+                Website ke sitemap mein mojood kuch URLs crawl limit ki wajah se crawl nahi hue (Crawl limit reached). Mazeed pages ke liye audit run karte waqt page limit barha kar select karein.
+              </p>
+            )}
           </section>
         )}
 
@@ -939,9 +1312,14 @@ export default function Home() {
               <div className="text-xl font-bold text-amber-400 mt-1">
                 {stats.psi_mobile_score !== null ? stats.psi_mobile_score : "—"}
               </div>
-              <span className="text-[11px] text-slate-400 font-mono">
+              <span className="text-[11px] text-slate-400 font-mono block">
                 Desktop: {stats.psi_desktop_score !== null ? stats.psi_desktop_score : "—"}
               </span>
+              {stats.psi_is_cached && (
+                <span className="text-[10px] text-amber-400/90 font-mono block mt-0.5">
+                  cached, measured at {stats.psi_cached_measured_at ? stats.psi_cached_measured_at.slice(0, 19).replace("T", " ") : "24h ago"}
+                </span>
+              )}
             </div>
 
             <div className="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4">
@@ -1018,6 +1396,13 @@ export default function Home() {
               >
                 <span>Export CSV</span>
               </a>
+              <button
+                onClick={handleOpenAsanaModal}
+                className="px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-300 font-medium rounded-lg flex items-center space-x-1.5 transition"
+              >
+                <Send className="w-3.5 h-3.5 text-red-400" />
+                <span>Export Asana</span>
+              </button>
             </div>
           </section>
         )}
@@ -1214,13 +1599,80 @@ export default function Home() {
                 </div>
               )}
 
+              {/* Sitemap Comparison Section with Full URL Lists */}
+              {((stats?.sitemap_stale_urls && stats.sitemap_stale_urls.length > 0) || (stats?.sitemap_missing_urls && stats.sitemap_missing_urls.length > 0)) && (
+                <div className="bg-slate-900/70 border border-indigo-900/40 rounded-xl p-4 space-y-4 text-xs">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                    <span className="font-semibold text-white text-sm flex items-center space-x-2">
+                      <span className="inline-block w-2 h-2 rounded-full bg-indigo-400"></span>
+                      <span>Sitemap Comparison & Audit Discrepancies</span>
+                    </span>
+                    <span className="text-[11px] text-slate-400">
+                      {stats?.sitemap_stale_urls?.length || 0} Stale URLs | {stats?.sitemap_missing_urls?.length || 0} Missing Crawled Pages
+                    </span>
+                  </div>
+
+                  {stats?.sitemap_stale_urls && stats.sitemap_stale_urls.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center space-x-2 text-rose-300 font-semibold text-[11px]">
+                        <span className="px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-800/60 text-[10px]">
+                          sitemap_lists_non_existent_url
+                        </span>
+                        <span>Stale Sitemap URLs (Returns 4xx/5xx or Uncrawlable):</span>
+                      </div>
+                      <div className="bg-slate-950/60 rounded-lg border border-rose-900/30 p-2.5 max-h-48 overflow-y-auto space-y-1">
+                        {stats.sitemap_stale_urls.map((item, idx) => (
+                          <div key={idx} className="flex items-center justify-between text-[11px] py-0.5 border-b border-slate-900/60 last:border-b-0">
+                            <span className="font-mono text-slate-300 truncate max-w-xl">{item.url}</span>
+                            <span className="px-1.5 py-0.5 bg-rose-900/40 text-rose-400 font-mono text-[10px] rounded border border-rose-800/40 shrink-0">
+                              HTTP {item.status_code}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {stats?.sitemap_missing_urls && stats.sitemap_missing_urls.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center space-x-2 text-amber-300 font-semibold text-[11px]">
+                        <span className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-800/60 text-[10px]">
+                          crawled_page_missing_from_sitemap
+                        </span>
+                        <span>Crawled 200 OK Indexable Canonical Pages Missing from Sitemap:</span>
+                      </div>
+                      <div className="bg-slate-950/60 rounded-lg border border-amber-900/30 p-2.5 max-h-48 overflow-y-auto space-y-1">
+                        {stats.sitemap_missing_urls.map((item, idx) => (
+                          <div key={idx} className="flex items-center justify-between text-[11px] py-0.5 border-b border-slate-900/60 last:border-b-0">
+                            <span className="font-mono text-slate-300 truncate max-w-md">{item.url}</span>
+                            <span className="text-slate-400 truncate max-w-xs text-[10px] italic">{item.title}</span>
+                            <span className="px-1.5 py-0.5 bg-amber-900/40 text-amber-300 font-mono text-[10px] rounded border border-amber-800/40 shrink-0">
+                              200 OK Canonical
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {verifierData?.verified_issues && verifierData.verified_issues.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                   {verifierData.verified_issues.map((issue) => (
                     <div key={issue.id} className="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 flex flex-col justify-between space-y-3">
                       <div>
                         <div className="flex items-center justify-between">
-                          <span className="font-mono text-xs font-bold text-slate-400">{issue.id}</span>
+                          <div className="flex items-center space-x-2">
+                            <span className="font-mono text-xs font-bold text-slate-400">{issue.id}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono border ${
+                              issue.source === "llm" 
+                                ? "bg-purple-950/60 text-purple-300 border-purple-800/40" 
+                                : "bg-cyan-950/60 text-cyan-300 border-cyan-800/40"
+                            }`}>
+                              {issue.source === "llm" ? "LLM" : "Fallback Rule"}
+                            </span>
+                          </div>
                           <span
                             className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
                               issue.severity === "high"
@@ -1656,22 +2108,41 @@ export default function Home() {
                   </div>
 
                   {selectedPlatform === "nextjs" && (
-                    <div className="flex items-center space-x-1.5 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800">
-                      <span className="text-[11px] text-slate-400">Router:</span>
-                      <select
-                        value={selectedRouterType}
-                        onChange={(e) => {
-                          const newR = e.target.value;
-                          setSelectedRouterType(newR);
-                          handleUpdatePlatform(selectedPlatform, newR);
-                        }}
-                        disabled={isUpdatingPlatform}
-                        className="bg-transparent text-xs font-semibold text-white focus:outline-none cursor-pointer"
-                      >
-                        <option value="app" className="bg-slate-900">App Router (app/)</option>
-                        <option value="pages" className="bg-slate-900">Pages Router (pages/)</option>
-                      </select>
-                    </div>
+                    <>
+                      <div className="flex items-center space-x-1.5 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800">
+                        <span className="text-[11px] text-slate-400">Router:</span>
+                        <select
+                          value={selectedRouterType}
+                          onChange={(e) => {
+                            const newR = e.target.value;
+                            setSelectedRouterType(newR);
+                            handleUpdatePlatform(selectedPlatform, newR, nextjsVersion);
+                          }}
+                          disabled={isUpdatingPlatform}
+                          className="bg-transparent text-xs font-semibold text-white focus:outline-none cursor-pointer"
+                        >
+                          <option value="app" className="bg-slate-900">App Router (app/)</option>
+                          <option value="pages" className="bg-slate-900">Pages Router (pages/)</option>
+                        </select>
+                      </div>
+
+                      <div className="flex items-center space-x-1.5 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800">
+                        <span className="text-[11px] text-slate-400">Version:</span>
+                        <select
+                          value={nextjsVersion}
+                          onChange={(e) => {
+                            const newV = e.target.value;
+                            setNextjsVersion(newV);
+                            handleUpdatePlatform(selectedPlatform, selectedRouterType, newV);
+                          }}
+                          disabled={isUpdatingPlatform}
+                          className="bg-transparent text-xs font-semibold text-white focus:outline-none cursor-pointer"
+                        >
+                          <option value="15+" className="bg-slate-900">Next.js 15+ (async params)</option>
+                          <option value="14" className="bg-slate-900">Next.js 14 (sync params)</option>
+                        </select>
+                      </div>
+                    </>
                   )}
 
                   {currentJob?.id && (
@@ -2047,6 +2518,428 @@ export default function Home() {
           )}
         </section>
       </main>
+
+      {/* Batch B: Asana Export & Preview Modal */}
+      {showAsanaModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0f172a] border border-slate-800 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center space-x-2">
+                <Send className="w-5 h-5 text-red-400" />
+                <h3 className="text-base font-semibold text-white">Asana Export & Task Mapping</h3>
+              </div>
+              <button onClick={() => setShowAsanaModal(false)} className="text-slate-400 hover:text-white">✕</button>
+            </div>
+
+            <div className="space-y-4 flex-1 overflow-y-auto pr-1 text-xs">
+              {asanaStatus?.configured ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+                  <div>
+                    <label className="text-slate-400 block mb-1">Select Workspace:</label>
+                    <select
+                      value={selectedAsanaWorkspace}
+                      onChange={(e) => handleAsanaWorkspaceChange(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white"
+                    >
+                      {asanaWorkspaces.map((w) => (
+                        <option key={w.gid} value={w.gid}>{w.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-slate-400 block mb-1">Select Project:</label>
+                    <select
+                      value={selectedAsanaProject}
+                      onChange={(e) => setSelectedAsanaProject(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white"
+                    >
+                      {asanaProjects.map((p) => (
+                        <option key={p.gid} value={p.gid}>{p.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-xl text-slate-300 text-xs sm:text-sm flex items-center space-x-2">
+                  <Info className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span>Direct sync to Asana is off. You can still download asana_import.csv below.</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between bg-slate-900/40 p-3 rounded-xl border border-slate-800">
+                <div className="flex items-center space-x-2">
+                  <Calendar className="w-4 h-4 text-slate-400" />
+                  <span className="text-slate-300">Milestone Start Date:</span>
+                  <input
+                    type="date"
+                    value={asanaStartDate}
+                    onChange={(e) => setAsanaStartDate(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white"
+                  />
+                </div>
+                <a
+                  href={`${API_BASE}/api/asana/jobs/${currentJob?.id}/csv?start_date=${asanaStartDate}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg flex items-center space-x-1.5 transition"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download asana_import.csv</span>
+                </a>
+              </div>
+
+              {/* How to Import into Asana (Free & Paid Compatible) */}
+              <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5 space-y-2 text-slate-300">
+                <div className="font-semibold text-white flex items-center gap-1.5">
+                  <Info className="w-4 h-4 text-indigo-400" />
+                  <span>How to Import into Asana (Free &amp; Paid Plans):</span>
+                </div>
+                <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-400">
+                  <li>Click <strong>Download asana_import.csv</strong> above.</li>
+                  <li>In Asana, open or create a project &rarr; click the project header dropdown &rarr; <strong>Import &rarr; CSV</strong>.</li>
+                  <li>Select the downloaded CSV file. Asana will prompt you to map columns interactively.</li>
+                  <li>Confirm column mapping: <code className="text-slate-200">Name</code> &rarr; Task Name, <code className="text-slate-200">Description</code> &rarr; Description, <code className="text-slate-200">Due Date</code> &rarr; Due Date (MM/DD/YYYY format).</li>
+                  <li>Sections are created automatically from rows ending with a colon (e.g. <code className="text-amber-300">Week 1:</code>).</li>
+                  <li>All task details (Impact, Effort, Done When criteria, Issue IDs, URLs) are embedded in the Description so no paid custom fields are required. Assignee is left blank by default.</li>
+                </ol>
+              </div>
+
+              {/* Task Preview Table */}
+              <div>
+                <h4 className="font-semibold text-white mb-2 flex items-center justify-between">
+                  <span>Dry-Run Task Mapping Preview ({asanaPreviewTasks?.length || 0} tasks):</span>
+                  <span className="text-[10px] text-slate-400 font-normal">Mapped from approved strategy roadmap</span>
+                </h4>
+                <div className="border border-slate-800 rounded-xl overflow-x-auto max-h-56">
+                  <table className="w-full text-left text-[11px]">
+                    <thead className="bg-slate-900 text-slate-400 border-b border-slate-800">
+                      <tr>
+                        <th className="p-2">Name</th>
+                        <th className="p-2">Section</th>
+                        <th className="p-2">Due Date</th>
+                        <th className="p-2">Priority</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800 font-mono">
+                      {asanaPreviewTasks?.map((t, idx) => (
+                        <tr key={idx} className="hover:bg-slate-900/50">
+                          <td className="p-2 text-white truncate max-w-xs">{t.name}</td>
+                          <td className="p-2 text-amber-400">{t.section}</td>
+                          <td className="p-2 text-slate-300">{t.due_on}</td>
+                          <td className="p-2 text-indigo-300 uppercase">{t.impact}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-800 flex items-center justify-end space-x-3">
+              <button
+                onClick={() => setShowAsanaModal(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs"
+              >
+                Close
+              </button>
+              {asanaStatus?.configured && (
+                <button
+                  onClick={handleExecuteAsanaSync}
+                  disabled={asanaLoading || !selectedAsanaProject}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-medium rounded-xl text-xs flex items-center space-x-1.5 shadow-lg shadow-red-600/30 transition"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{asanaLoading ? "Syncing..." : "Push to Asana Project"}</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch B: Jobs History Modal */}
+      {showHistoryModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0f172a] border border-slate-800 rounded-2xl max-w-4xl w-full p-6 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center space-x-2">
+                <History className="w-5 h-5 text-indigo-400" />
+                <h3 className="text-base font-semibold text-white">Audit Jobs History</h3>
+              </div>
+              <button onClick={() => setShowHistoryModal(false)} className="text-slate-400 hover:text-white">✕</button>
+            </div>
+
+            {(historyCompareA || historyCompareB) && (
+              <div className="bg-slate-900/90 border border-indigo-900/60 p-3 rounded-xl flex items-center justify-between text-xs">
+                <div className="flex items-center space-x-3 font-mono text-[11px]">
+                  <span className="text-slate-400">Baseline (A): <strong className="text-indigo-400">{historyCompareA ? historyCompareA.slice(0, 8) : "None"}</strong></span>
+                  <span className="text-slate-600">vs</span>
+                  <span className="text-slate-400">Follow-up (B): <strong className="text-emerald-400">{historyCompareB ? historyCompareB.slice(0, 8) : "None"}</strong></span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => { setHistoryCompareA(""); setHistoryCompareB(""); }}
+                    className="px-2.5 py-1 text-slate-400 hover:text-white text-[11px]"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    disabled={!historyCompareA || !historyCompareB || historyCompareA === historyCompareB}
+                    onClick={handleRunComparison}
+                    className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 disabled:opacity-40 text-white rounded-lg font-semibold text-[11px] shadow-sm transition"
+                  >
+                    Compare A vs B
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto pr-1 text-xs">
+              {historyLoading ? (
+                <div className="p-8 text-center text-slate-500">Loading audit history...</div>
+              ) : jobsHistory.length === 0 ? (
+                <div className="p-8 text-center text-slate-500">No past audit jobs found.</div>
+              ) : (
+                <div className="border border-slate-800 rounded-xl overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-900 text-slate-400 border-b border-slate-800">
+                      <tr>
+                        <th className="p-3">Job ID & Target</th>
+                        <th className="p-3">Status</th>
+                        <th className="p-3">Pages</th>
+                        <th className="p-3">Issues</th>
+                        <th className="p-3">Cost</th>
+                        <th className="p-3">Pending Review</th>
+                        <th className="p-3">Compare</th>
+                        <th className="p-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {jobsHistory.map((j) => (
+                        <tr key={j.id} className="hover:bg-slate-900/60">
+                          <td className="p-3 font-mono">
+                            <div className="text-white font-medium truncate max-w-xs">{j.target_url}</div>
+                            <div className="text-[10px] text-slate-500">{j.id} • {new Date(j.created_at).toLocaleString()}</div>
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              j.status === "completed"
+                                ? "bg-emerald-950/80 text-emerald-300 border border-emerald-800/50"
+                                : j.status === "interrupted"
+                                ? "bg-amber-950/80 text-amber-300 border border-amber-800/50"
+                                : j.status === "cancelled"
+                                ? "bg-slate-800 text-slate-400"
+                                : "bg-rose-950/80 text-rose-300 border border-rose-800/50"
+                            }`}>
+                              {j.status}
+                            </span>
+                          </td>
+                          <td className="p-3 font-mono">{j.pages_crawled}</td>
+                          <td className="p-3 font-mono text-rose-400">{j.verified_issues_count || 0}</td>
+                          <td className="p-3 font-mono text-emerald-400">${(j.cost_usd || 0).toFixed(4)}</td>
+                          <td className="p-3 font-mono text-amber-300">{j.pending_reviews_count || 0}</td>
+                          <td className="p-3">
+                            <div className="flex items-center space-x-1">
+                              <button
+                                onClick={() => setHistoryCompareA(historyCompareA === j.id ? "" : j.id)}
+                                className={`px-2 py-0.5 rounded text-[10px] font-mono transition ${
+                                  historyCompareA === j.id
+                                    ? "bg-indigo-600 text-white font-bold"
+                                    : "bg-slate-800 text-slate-400 hover:text-white"
+                                }`}
+                                title="Set as Baseline (Job A)"
+                              >
+                                {historyCompareA === j.id ? "A ✓" : "Set A"}
+                              </button>
+                              <button
+                                onClick={() => setHistoryCompareB(historyCompareB === j.id ? "" : j.id)}
+                                className={`px-2 py-0.5 rounded text-[10px] font-mono transition ${
+                                  historyCompareB === j.id
+                                    ? "bg-emerald-600 text-white font-bold"
+                                    : "bg-slate-800 text-slate-400 hover:text-white"
+                                }`}
+                                title="Set as Comparison (Job B)"
+                              >
+                                {historyCompareB === j.id ? "B ✓" : "Set B"}
+                              </button>
+                            </div>
+                          </td>
+                          <td className="p-3 text-right space-x-2">
+                            <button
+                              onClick={() => handleSelectJobFromHistory(j.id)}
+                              className="px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 rounded font-medium text-[11px]"
+                            >
+                              Open
+                            </button>
+                            <button
+                              onClick={() => handleDeleteJob(j.id)}
+                              className="px-2 py-1 bg-rose-950/50 hover:bg-rose-900 text-rose-400 rounded text-[11px]"
+                              title="Purge Job"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
+              <span className="text-xs text-slate-400">Total logged jobs: <strong>{jobsHistory.length}</strong></span>
+              <button
+                onClick={() => setShowHistoryModal(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch B: Before/After Comparison Modal */}
+      {showCompareModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0f172a] border border-slate-800 rounded-2xl max-w-4xl w-full p-6 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div>
+                <h3 className="text-base font-semibold text-white">Before vs After Comparison</h3>
+                <p className="text-xs text-slate-400 font-mono">
+                  Baseline: {historyCompareA.slice(0, 8)} vs Follow-up: {historyCompareB.slice(0, 8)}
+                </p>
+              </div>
+              <div className="flex items-center space-x-2">
+                {comparisonData && (
+                  <>
+                    <a
+                      href={`${API_BASE}/api/compare/export/csv?before_job_id=${historyCompareA}&after_job_id=${historyCompareB}`}
+                      download={`comparison_${historyCompareA.slice(0, 8)}_${historyCompareB.slice(0, 8)}.csv`}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium flex items-center space-x-1"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>CSV</span>
+                    </a>
+                    <a
+                      href={`${API_BASE}/api/compare/export/pdf?before_job_id=${historyCompareA}&after_job_id=${historyCompareB}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-1.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 rounded-lg text-xs font-medium flex items-center space-x-1"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>PDF</span>
+                    </a>
+                  </>
+                )}
+                <button onClick={() => setShowCompareModal(false)} className="text-slate-400 hover:text-white p-1">
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
+              {comparisonLoading ? (
+                <div className="p-8 text-center text-slate-500">Computing deterministic before/after diff...</div>
+              ) : !comparisonData ? (
+                <div className="p-8 text-center text-slate-500">No comparison data available.</div>
+              ) : (
+                <>
+                  {/* Completeness / Guard Warning */}
+                  {comparisonData.incomplete_status && (
+                    <div className="bg-amber-950/40 border border-amber-800/60 p-3 rounded-xl text-amber-300 text-xs flex items-center space-x-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>
+                        <strong>Incomplete Crawl Guard:</strong> {comparisonData.incomplete_reasons?.join("; ") || "One or both jobs have incomplete crawl data."}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Summary Metric Cards */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-emerald-950/30 border border-emerald-800/40 p-3 rounded-xl">
+                      <div className="text-[11px] text-emerald-400 uppercase font-semibold">Fixed Issues</div>
+                      <div className="text-2xl font-bold text-emerald-300 font-mono mt-1">
+                        {comparisonData.fixed_issues?.length || 0}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-1">Resolved in later crawl</div>
+                    </div>
+
+                    <div className="bg-rose-950/30 border border-rose-800/40 p-3 rounded-xl">
+                      <div className="text-[11px] text-rose-400 uppercase font-semibold">New Issues</div>
+                      <div className="text-2xl font-bold text-rose-300 font-mono mt-1">
+                        {comparisonData.new_issues?.length || 0}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-1">Introduced in later crawl</div>
+                    </div>
+
+                    <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl">
+                      <div className="text-[11px] text-slate-400 uppercase font-semibold">Unchanged Issues</div>
+                      <div className="text-2xl font-bold text-slate-200 font-mono mt-1">
+                        {comparisonData.unchanged_issues?.length || 0}
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-1">Still present across both</div>
+                    </div>
+
+                    <div className="bg-amber-950/30 border border-amber-800/40 p-3 rounded-xl">
+                      <div className="text-[11px] text-amber-400 uppercase font-semibold">Not Re-checked</div>
+                      <div className="text-2xl font-bold text-amber-300 font-mono mt-1">
+                        {comparisonData.not_rechecked_issues?.length || 0}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-1">URLs absent from later run</div>
+                    </div>
+                  </div>
+
+                  {/* Fixed Issues List */}
+                  {comparisonData.fixed_issues && comparisonData.fixed_issues.length > 0 && (
+                    <div className="border border-emerald-900/50 rounded-xl overflow-hidden bg-emerald-950/10">
+                      <div className="bg-emerald-950/40 px-3 py-2 border-b border-emerald-900/50 font-semibold text-emerald-300 text-xs">
+                        ✓ Fixed Issues ({comparisonData.fixed_issues.length})
+                      </div>
+                      <div className="divide-y divide-emerald-900/30 p-2 space-y-2">
+                        {comparisonData.fixed_issues.map((iss: any, idx: number) => (
+                          <div key={idx} className="p-1 font-mono text-[11px]">
+                            <div className="text-emerald-300 font-semibold">{iss.issue_type}</div>
+                            <div className="text-slate-400 truncate">{iss.url}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* New Issues List */}
+                  {comparisonData.new_issues && comparisonData.new_issues.length > 0 && (
+                    <div className="border border-rose-900/50 rounded-xl overflow-hidden bg-rose-950/10">
+                      <div className="bg-rose-950/40 px-3 py-2 border-b border-rose-900/50 font-semibold text-rose-300 text-xs">
+                        ⚠ New Issues ({comparisonData.new_issues.length})
+                      </div>
+                      <div className="divide-y divide-rose-900/30 p-2 space-y-2">
+                        {comparisonData.new_issues.map((iss: any, idx: number) => (
+                          <div key={idx} className="p-1 font-mono text-[11px]">
+                            <div className="text-rose-300 font-semibold">{iss.issue_type}</div>
+                            <div className="text-slate-400 truncate">{iss.url}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="pt-3 border-t border-slate-800 flex justify-end">
+              <button
+                onClick={() => setShowCompareModal(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs"
+              >
+                Close Comparison
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Evidence Modal */}
       {evidenceModalData && (

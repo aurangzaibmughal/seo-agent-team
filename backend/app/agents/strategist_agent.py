@@ -31,6 +31,9 @@ HUMAN_ISSUE_LABELS: Dict[str, str] = {
     "low_performance_score": "Improve Core Web Vitals performance score",
     "slow_lcp": "Optimize Largest Contentful Paint (LCP)",
     "poor_cls": "Fix Cumulative Layout Shift (CLS)",
+    "brand_repeated_in_title": "Deduplicate brand occurrences in title tags",
+    "sitemap_lists_non_existent_url": "Remove 404 URLs from sitemap",
+    "crawled_page_missing_from_sitemap": "Add missing crawled pages to sitemap",
 }
 
 def format_human_task_title(issue_type: str, url: str) -> str:
@@ -87,10 +90,11 @@ class StrategistAgent:
         cls,
         verified_tech: List[TechnicalIssue],
         verified_perf: List[MonitorFinding],
-        verified_research: List[ResearchOpportunity]
+        verified_research: List[ResearchOpportunity],
+        force_fallback: bool = False
     ) -> Tuple[StrategyReport, str, float, Optional[str], Optional[str]]:
         """Returns (report, mode, cost_usd, failure_reason, model_used)."""
-        if settings.GEMINI_API_KEY:
+        if not force_fallback and settings.GEMINI_API_KEY:
             models = settings.gemini_model_list
             errors_by_model = []
             for model_name in models:
@@ -109,13 +113,16 @@ class StrategistAgent:
                     errors_by_model.append(err_msg)
 
             failure_reason = "All models failed -> " + "; ".join(errors_by_model)
+        elif force_fallback:
+            failure_reason = "Cost cap reached; deterministic fallback invoked."
         else:
             failure_reason = "GEMINI_API_KEY is not configured in .env"
 
+        mode = "fallback_cost_cap" if force_fallback else "fallback"
         print(f"StrategistAgent falling back to deterministic synthesizer: {failure_reason}")
         report = cls._run_deterministic(verified_tech, verified_perf, verified_research)
         cls._compute_priority_scores_and_sort(report)
-        return report, "fallback", 0.0, failure_reason, None
+        return report, mode, 0.0, failure_reason, None
 
     @classmethod
     def _compute_priority_scores_and_sort(cls, report: StrategyReport):

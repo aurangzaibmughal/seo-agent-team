@@ -146,6 +146,8 @@ class ContentBrief(BaseModel):
     current_title: Optional[str] = None
     current_meta: Optional[str] = None
     current_h1: Optional[str] = None
+    source_url: Optional[str] = None
+    source_text: Optional[str] = None
     source: str = "llm"
 
 class OnPageRewrite(BaseModel):

@@ -19,6 +19,18 @@ ISSUE_METADATA = {
         "impact": "5xx server errors prevent search engines from crawling content and cause rankings to drop drastically.",
         "fix_hint": "Check server error logs, backend application health, and database connection pools for unhandled crashes."
     },
+    "sitemap_lists_non_existent_url": {
+        "severity": "high",
+        "effort": "low",
+        "impact": "Sitemap declares URLs that return HTTP 404/5xx or are not crawlable, wasting search engine crawl budget and causing indexation dropouts.",
+        "fix_hint": "Remove non-existent 404 URLs from sitemap or publish the missing pages."
+    },
+    "crawled_page_missing_from_sitemap": {
+        "severity": "medium",
+        "effort": "low",
+        "impact": "Crawled 200 indexable canonical pages are omitted from sitemap.xml, impairing search engine discovery and indexation.",
+        "fix_hint": "Add all 200 OK indexable canonical pages to sitemap.xml or app/sitemap.ts."
+    },
     "missing_title": {
         "severity": "high",
         "effort": "low",
@@ -56,10 +68,22 @@ ISSUE_METADATA = {
         "fix_hint": "Correct site-wide template header to generate self-referential canonical tags for unique URLs instead of a global static canonical target."
     },
     "noindex_page": {
+        "severity": "high",
+        "effort": "low",
+        "impact": "Important content page (home, service, blog, pricing) is blocked from search engine indexing by robots meta or X-Robots-Tag directive.",
+        "fix_hint": "Remove 'noindex' directive from this content page to allow search engine indexing."
+    },
+    "indexable_admin_page": {
+        "severity": "high",
+        "effort": "low",
+        "impact": "Administrative portal is indexable by search engines, exposing private gateway access in search results.",
+        "fix_hint": "Add <meta name='robots' content='noindex, nofollow'> to protect administrative gateway from indexing."
+    },
+    "indexable_private_page": {
         "severity": "medium",
         "effort": "low",
-        "impact": "Page is completely blocked from search engine result pages by robots meta or X-Robots-Tag directive.",
-        "fix_hint": "Remove 'noindex' directive if the page is intended to receive organic search traffic."
+        "impact": "Private or utility authentication page (login, signup, cart, account) is indexable by search engines, causing thin content in SERPs.",
+        "fix_hint": "Add <meta name='robots' content='noindex, follow'> to prevent search indexing of utility and authentication forms."
     },
     "duplicate_title": {
         "severity": "medium",
@@ -132,6 +156,12 @@ ISSUE_METADATA = {
         "effort": "medium",
         "impact": "Cumulative Layout Shift above 0.1 creates visual instability for users during page load.",
         "fix_hint": "Specify explicit width and height attributes on images/videos and avoid injecting dynamic DOM elements above the fold."
+    },
+    "brand_repeated_in_title": {
+        "severity": "medium",
+        "effort": "low",
+        "impact": "Brand name is repeated 2 or more times in the title tag, creating redundant snippets in search results.",
+        "fix_hint": "If the layout adds a brand suffix via a title template, remove the brand from this page's own title."
     }
 }
 
@@ -150,16 +180,21 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
     "missing_title": "high",
     "low_performance_score": "high",
     "slow_lcp": "high",
+    "noindex_page": "high",
+    "indexable_admin_page": "high",
 
     # Medium base severity
     "redirect_chain": "medium",
     "canonical_to_other": "medium",
-    "noindex_page": "medium",
+    "indexable_private_page": "medium",
     "missing_canonical": "medium",
     "duplicate_title": "medium",
     "missing_h1": "medium",
     "poor_cls": "medium",
     "orphan_page": "medium",
+    "brand_repeated_in_title": "medium",
+    "sitemap_lists_non_existent_url": "medium",
+    "crawled_page_missing_from_sitemap": "medium",
 
     # Low base severity
     "title_borderline": "low",
@@ -181,6 +216,12 @@ def get_deterministic_severity(issue_type: str, url_count: int = 1, total_pages:
 
     if base == "medium":
         # Escalate to high if scale is significant
+        if issue_type == "sitemap_lists_non_existent_url":
+            return "high" if url_count >= 5 else "medium"
+        if issue_type == "crawled_page_missing_from_sitemap":
+            return "medium"
+        if issue_type == "brand_repeated_in_title" and ratio >= 0.30:
+            return "high"
         if issue_type in ("duplicate_title", "missing_h1") and (url_count >= 3 or ratio >= 0.15):
             return "high"
         if issue_type == "canonical_to_other" and (url_count >= 5 or ratio >= 0.20):
@@ -201,7 +242,11 @@ def get_deterministic_severity(issue_type: str, url_count: int = 1, total_pages:
 
 class TechnicalAgent:
     @classmethod
-    async def run(cls, candidates: List[Dict[str, Any]]) -> Tuple[TechnicalAgentReport, str, float, Optional[str], Optional[str]]:
+    async def run(
+        cls,
+        candidates: List[Dict[str, Any]],
+        force_fallback: bool = False
+    ) -> Tuple[TechnicalAgentReport, str, float, Optional[str], Optional[str]]:
         """Returns (report, mode, cost_usd, failure_reason, model_used). Mode is 'llm' or 'fallback'."""
         if not candidates:
             return TechnicalAgentReport(
@@ -214,7 +259,7 @@ class TechnicalAgent:
             if "id" not in c:
                 c["id"] = f"C-{idx:03d}"
 
-        if settings.GEMINI_API_KEY:
+        if not force_fallback and settings.GEMINI_API_KEY:
             models = settings.gemini_model_list
             errors_by_model = []
             for model_name in models:
@@ -229,12 +274,15 @@ class TechnicalAgent:
                     errors_by_model.append(err_msg)
 
             failure_reason = "All models in fallback chain failed -> " + "; ".join(errors_by_model)
+        elif force_fallback:
+            failure_reason = "Cost cap reached; deterministic fallback invoked."
         else:
             failure_reason = "GEMINI_API_KEY is not configured in .env"
 
+        mode = "fallback_cost_cap" if force_fallback else "fallback"
         print(f"TechnicalAgent falling back to deterministic synthesizer: {failure_reason}")
         report = cls._run_deterministic(candidates)
-        return report, "fallback", 0.0, failure_reason, None
+        return report, mode, 0.0, failure_reason, None
 
     @classmethod
     def _run_deterministic(cls, candidates: List[Dict[str, Any]]) -> TechnicalAgentReport:

@@ -17,13 +17,15 @@ if settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
 LOCAL_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "local_seo.db")
 
 def get_sqlite_conn():
-    conn = sqlite3.connect(LOCAL_DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(LOCAL_DB_PATH, check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
     conn = get_sqlite_conn()
     cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=30000")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS projects (
             id TEXT PRIMARY KEY,
@@ -309,7 +311,8 @@ class DBManager:
         max_pages: int = 50,
         project_id: Optional[str] = None,
         competitor_domains: Optional[List[str]] = None,
-        is_demo: bool = False
+        is_demo: bool = False,
+        fresh_psi: bool = False
     ) -> Dict[str, Any]:
         job_id = str(uuid4())
         now = datetime.now(timezone.utc).isoformat()
@@ -326,6 +329,7 @@ class DBManager:
             "sitemap_found": 0,
             "psi_status": "pending",
             "is_demo": 1 if is_demo else 0,
+            "fresh_psi": 1 if fresh_psi else 0,
             "competitor_domains": json.dumps(competitor_domains or []),
             "cost_usd": 0.0,
             "created_at": now,
@@ -383,6 +387,365 @@ class DBManager:
         row = cursor.fetchone()
         conn.close()
         return dict(row) if row else None
+
+    @staticmethod
+    @staticmethod
+    def get_previous_completed_job_for_domain(target_url: str, exclude_job_id: str) -> Optional[Dict[str, Any]]:
+        from urllib.parse import urlparse
+        domain = urlparse(target_url).netloc.lower()
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM jobs 
+            WHERE id != ? AND (status = 'completed' OR pages_crawled > 0)
+            ORDER BY created_at DESC
+        """, (exclude_job_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        for r in rows:
+            d = dict(r)
+            if urlparse(d.get("target_url", "")).netloc.lower() == domain:
+                return d
+        return None
+
+    @staticmethod
+    def get_daily_cost_usd() -> float:
+        """Returns the sum of cost_usd for jobs created in the last 24 hours."""
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        one_day_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        cursor.execute("SELECT SUM(cost_usd) FROM jobs WHERE created_at >= ?", (one_day_ago,))
+        res = cursor.fetchone()
+        conn.close()
+        return float(res[0]) if (res and res[0] is not None) else 0.0
+
+    @staticmethod
+    def get_jobs_history(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Returns ordered jobs with issue counts, pending review count, mode, and cost."""
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, target_url, status, current_step, max_pages, pages_crawled, 
+                   cost_usd, crawl_incomplete, completeness_status, incomplete_reasons_json,
+                   platform, router_type, is_demo, created_at, updated_at
+            FROM jobs
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset))
+        jobs = [dict(r) for r in cursor.fetchall()]
+
+        for job in jobs:
+            j_id = job["id"]
+            cursor.execute("SELECT output_json FROM agent_runs WHERE job_id = ? AND agent = 'verifier'", (j_id,))
+            ver_row = cursor.fetchone()
+            verified_count = 0
+            rejected_count = 0
+            if ver_row and ver_row[0]:
+                try:
+                    ver_data = json.loads(ver_row[0])
+                    verified_count = len(ver_data.get("verified_issues", []))
+                    rejected_count = len(ver_data.get("rejected_issues", []))
+                except Exception:
+                    pass
+            job["verified_issues_count"] = verified_count
+            job["rejected_issues_count"] = rejected_count
+
+            cursor.execute("SELECT COUNT(*) FROM review_items WHERE job_id = ? AND status = 'pending'", (j_id,))
+            p_row = cursor.fetchone()
+            job["pending_reviews_count"] = p_row[0] if p_row else 0
+
+            cursor.execute("SELECT agent, mode FROM agent_runs WHERE job_id = ?", (j_id,))
+            job["agent_modes"] = {r["agent"]: r["mode"] for r in cursor.fetchall()}
+
+        conn.close()
+        return jobs
+
+    @staticmethod
+    def delete_job(job_id: str) -> bool:
+        """Purges a job and all associated child data."""
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        tables = [
+            "crawl_pages", "crawl_links", "agent_runs", "review_items", "review_events",
+            "performance_snapshots", "research_snapshots", "strategy_plans", "content_outputs",
+            "code_outputs", "competitor_pages", "psi_results"
+        ]
+        for t in tables:
+            try:
+                cursor.execute(f"DELETE FROM {t} WHERE job_id = ?", (job_id,))
+            except Exception:
+                pass
+        cursor.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+        conn.commit()
+        conn.close()
+        return True
+
+    @staticmethod
+    def mark_stuck_jobs_as_interrupted() -> int:
+        """Finds any jobs stuck in 'running' or 'crawling' state at server startup and marks them 'interrupted'."""
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        now = datetime.now(timezone.utc).isoformat()
+        cursor.execute("""
+            UPDATE jobs 
+            SET status = 'interrupted', error = 'Server restarted while job was in progress', updated_at = ?
+            WHERE status IN ('running', 'crawling', 'in_progress')
+        """, (now,))
+        count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return count
+
+    # =========================================================================
+    # Milestone 6: Review & Approval Workflow
+    # =========================================================================
+
+    @staticmethod
+    @staticmethod
+    def save_review_item(item_data: Dict[str, Any]):
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        now = datetime.now(timezone.utc).isoformat()
+        cursor.execute("""
+            INSERT OR REPLACE INTO review_items (id, job_id, item_type, item_ref, title, status, reviewer_note, original_payload_json, edited_payload_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            item_data.get("id") or str(uuid4()),
+            item_data["job_id"],
+            item_data.get("item_type", "code_artifact"),
+            item_data.get("item_ref", ""),
+            item_data.get("title", ""),
+            item_data.get("status", "pending"),
+            item_data.get("reviewer_note", ""),
+            item_data.get("original_payload_json", "{}"),
+            item_data.get("edited_payload_json", "{}"),
+            item_data.get("updated_at", now)
+        ))
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def populate_review_items_for_job(job_id: str) -> int:
+        """Populates review items from content rewrites, briefs, strategy tasks, and code redirects without duplicating."""
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        now = datetime.now(timezone.utc).isoformat()
+        inserted = 0
+
+        # Existing items set
+        cursor.execute("SELECT item_type, item_ref FROM review_items WHERE job_id = ?", (job_id,))
+        existing_items = {(row[0], row[1]) for row in cursor.fetchall()}
+
+        # 1. Content rewrites
+        cont = DBManager.get_content_output(job_id)
+        if cont and cont.get("content"):
+            c_data = cont["content"]
+            for rw in c_data.get("rewrites", []):
+                r_url = rw.get("url", "")
+                if ("meta_rewrite", r_url) in existing_items:
+                    continue
+                r_id = f"REV-RW-{uuid4().hex[:8]}"
+                cursor.execute("""
+                    INSERT OR IGNORE INTO review_items (id, job_id, item_type, item_ref, title, status, original_payload_json, edited_payload_json, updated_at)
+                    VALUES (?, ?, 'meta_rewrite', ?, ?, 'pending', ?, '{}', ?)
+                """, (r_id, job_id, r_url, f"Rewrite: {r_url}", json.dumps(rw), now))
+                if cursor.rowcount > 0:
+                    inserted += 1
+                    existing_items.add(("meta_rewrite", r_url))
+
+            for br in c_data.get("briefs", []):
+                b_kw = br.get("primary_keyword", "")
+                if ("content_brief", b_kw) in existing_items:
+                    continue
+                b_id = f"REV-BR-{uuid4().hex[:8]}"
+                cursor.execute("""
+                    INSERT OR IGNORE INTO review_items (id, job_id, item_type, item_ref, title, status, original_payload_json, edited_payload_json, updated_at)
+                    VALUES (?, ?, 'content_brief', ?, ?, 'pending', ?, '{}', ?)
+                """, (b_id, job_id, b_kw, f"Brief: {b_kw}", json.dumps(br), now))
+                if cursor.rowcount > 0:
+                    inserted += 1
+                    existing_items.add(("content_brief", b_kw))
+
+        # 2. Strategy tasks
+        strat = DBManager.get_strategy_plan(job_id)
+        if strat and strat.get("plan"):
+            for t in strat["plan"].get("tasks", []):
+                t_id = t.get("id") or t.get("task_id") or ""
+                if ("strategy_task", t_id) in existing_items:
+                    continue
+                r_id = f"REV-TSK-{uuid4().hex[:8]}"
+                cursor.execute("""
+                    INSERT OR IGNORE INTO review_items (id, job_id, item_type, item_ref, title, status, original_payload_json, edited_payload_json, updated_at)
+                    VALUES (?, ?, 'strategy_task', ?, ?, 'pending', ?, '{}', ?)
+                """, (r_id, job_id, t_id, f"Strategy: {t.get('title', '')}", json.dumps(t), now))
+                if cursor.rowcount > 0:
+                    inserted += 1
+                    existing_items.add(("strategy_task", t_id))
+
+        conn.commit()
+        conn.close()
+        return inserted
+
+    @staticmethod
+    def get_review_items(job_id: str, item_type: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        query = "SELECT * FROM review_items WHERE job_id = ?"
+        params: List[Any] = [job_id]
+        if item_type:
+            query += " AND item_type = ?"
+            params.append(item_type)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY updated_at DESC"
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+        conn.close()
+
+        results = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["original_payload"] = json.loads(d.get("original_payload_json") or "{}")
+            except Exception:
+                d["original_payload"] = {}
+            try:
+                d["edited_payload"] = json.loads(d.get("edited_payload_json") or "{}")
+            except Exception:
+                d["edited_payload"] = {}
+            results.append(d)
+        return results
+
+    @staticmethod
+    def get_review_counts(job_id: str) -> Dict[str, int]:
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, COUNT(*) FROM review_items WHERE job_id = ? GROUP BY status", (job_id,))
+        counts = {r[0]: r[1] for r in cursor.fetchall()}
+        conn.close()
+        total = sum(counts.values())
+        return {
+            "total": total,
+            "pending": counts.get("pending", 0),
+            "approved": counts.get("approved", 0),
+            "rejected": counts.get("rejected", 0),
+            "edited": counts.get("edited", 0)
+        }
+
+    @staticmethod
+    def get_review_events(job_id: str, item_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        if item_id:
+            cursor.execute("SELECT * FROM review_events WHERE job_id = ? AND item_id = ? ORDER BY timestamp ASC", (job_id, item_id))
+        else:
+            cursor.execute("SELECT * FROM review_events WHERE job_id = ? ORDER BY timestamp ASC", (job_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def update_review_item_status(item_id: str, status: str, note: str = "") -> Optional[Dict[str, Any]]:
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM review_items WHERE id = ?", (item_id,))
+        item = cursor.fetchone()
+        if not item:
+            conn.close()
+            return None
+
+        old_status = item["status"]
+        now = datetime.now(timezone.utc).isoformat()
+        cursor.execute("""
+            UPDATE review_items 
+            SET status = ?, reviewer_note = ?, updated_at = ?
+            WHERE id = ?
+        """, (status, note, now, item_id))
+
+        # Log event
+        cursor.execute("""
+            INSERT INTO review_events (id, job_id, item_id, action, old_value, new_value, reviewer_note, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (str(uuid4()), item["job_id"], item_id, f"status_change_to_{status}", old_status, status, note, now))
+
+        conn.commit()
+        cursor.execute("SELECT * FROM review_items WHERE id = ?", (item_id,))
+        updated = cursor.fetchone()
+        conn.close()
+        return dict(updated) if updated else None
+
+    @staticmethod
+    def edit_review_item(job_id: str, item_id: str, edited_payload: Dict[str, Any], reviewer_note: str = "human-edited") -> Dict[str, Any]:
+        # Validate character bounds
+        if "suggested_title" in edited_payload:
+            val = str(edited_payload["suggested_title"]).strip()
+            if len(val) > 60:
+                raise ValueError("suggested_title exceeds maximum 60 characters limit")
+        if "suggested_meta" in edited_payload:
+            val = str(edited_payload["suggested_meta"]).strip()
+            if len(val) > 155:
+                raise ValueError("suggested_meta exceeds maximum 155 characters limit")
+
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM review_items WHERE id = ?", (item_id,))
+        item = cursor.fetchone()
+        if not item:
+            conn.close()
+            raise ValueError("Review item not found")
+
+        now = datetime.now(timezone.utc).isoformat()
+        old_val = item["edited_payload_json"] or item["original_payload_json"]
+        new_val = json.dumps(edited_payload)
+
+        cursor.execute("""
+            UPDATE review_items
+            SET status = 'edited', edited_payload_json = ?, reviewer_note = ?, updated_at = ?
+            WHERE id = ?
+        """, (new_val, reviewer_note, now, item_id))
+
+        cursor.execute("""
+            INSERT INTO review_events (id, job_id, item_id, action, old_value, new_value, reviewer_note, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (str(uuid4()), job_id, item_id, "edit", old_val, new_val, reviewer_note, now))
+
+        conn.commit()
+        cursor.execute("SELECT * FROM review_items WHERE id = ?", (item_id,))
+        res = dict(cursor.fetchone())
+        conn.close()
+        res["edited_payload"] = edited_payload
+        return res
+
+    @staticmethod
+    def bulk_approve_review_items(job_id: str, low_risk_only: bool = False, item_types: Optional[List[str]] = None) -> int:
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        query = "SELECT id, status FROM review_items WHERE job_id = ? AND status = 'pending'"
+        params: List[Any] = [job_id]
+        if item_types:
+            placeholders = ",".join("?" for _ in item_types)
+            query += f" AND item_type IN ({placeholders})"
+            params.extend(item_types)
+
+        cursor.execute(query, tuple(params))
+        items_to_approve = cursor.fetchall()
+        now = datetime.now(timezone.utc).isoformat()
+        count = 0
+
+        for r in items_to_approve:
+            iid = r["id"]
+            cursor.execute("UPDATE review_items SET status = 'approved', updated_at = ? WHERE id = ?", (now, iid))
+            cursor.execute("""
+                INSERT INTO review_events (id, job_id, item_id, action, old_value, new_value, reviewer_note, timestamp)
+                VALUES (?, ?, ?, 'bulk_approve', 'pending', 'approved', 'bulk approved by user', ?)
+            """, (str(uuid4()), job_id, iid, now))
+            count += 1
+
+        conn.commit()
+        conn.close()
+        return count
+
 
     @staticmethod
     def save_crawl_page(page_data: Dict[str, Any]) -> str:
@@ -567,6 +930,17 @@ class DBManager:
         if "fetched_at" not in psi_data:
             psi_data["fetched_at"] = datetime.now(timezone.utc).isoformat()
         
+        raw_obj = psi_data.get("raw_json") or {}
+        if not isinstance(raw_obj, dict):
+            try:
+                raw_obj = json.loads(raw_obj)
+            except Exception:
+                raw_obj = {}
+        if "is_cached" in psi_data:
+            raw_obj["is_cached"] = psi_data["is_cached"]
+        if "cached_measured_at" in psi_data:
+            raw_obj["cached_measured_at"] = psi_data["cached_measured_at"]
+
         conn = get_sqlite_conn()
         cursor = conn.cursor()
         cursor.execute("""
@@ -585,7 +959,7 @@ class DBManager:
             psi_data.get("inp_or_tbt_ms"),
             psi_data.get("fcp_ms"),
             psi_data.get("ttfb_ms"),
-            json.dumps(psi_data.get("raw_json")) if psi_data.get("raw_json") else None,
+            json.dumps(raw_obj) if raw_obj else None,
             psi_data.get("error"),
             psi_data["fetched_at"]
         ))
@@ -604,7 +978,11 @@ class DBManager:
         for r in rows:
             d = dict(r)
             try:
-                d["raw_json"] = json.loads(d["raw_json"]) if d.get("raw_json") else None
+                raw_parsed = json.loads(d["raw_json"]) if d.get("raw_json") else None
+                d["raw_json"] = raw_parsed
+                if isinstance(raw_parsed, dict):
+                    d["is_cached"] = raw_parsed.get("is_cached", False)
+                    d["cached_measured_at"] = raw_parsed.get("cached_measured_at")
             except Exception:
                 pass
             results.append(d)

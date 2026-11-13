@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from typing import List, Dict, Any, Tuple, Optional, Set
 from collections import defaultdict, Counter
 from app.core.config import settings
+from app.core.classification import classify_page_type
 from app.models.agent_schemas import (
     ResearchOpportunity, ContentBrief, OnPageRewrite,
     InternalLinkSuggestion, ContentAgentReport
@@ -323,7 +324,20 @@ def compute_internal_link_suggestions(
     - Requires at least 2 shared meaningful terms (ignoring generic terms: digital, services, business, etc.)
     """
     gsc_queries = gsc_queries or []
-    pages_200 = [p for p in crawl_pages if p.get("status_code") == 200]
+    # Never suggest internal links to or from noindex pages or utility pages
+    def is_eligible(p: Dict[str, Any]) -> bool:
+        u = p.get("url", "")
+        if not u:
+            return False
+        if classify_page_type(u) == "utility":
+            return False
+        if p.get("indexability_status") in ("noindex_meta", "noindex_header"):
+            return False
+        if p.get("indexable") is False:
+            return False
+        return True
+
+    pages_200 = [p for p in crawl_pages if p.get("status_code") == 200 and is_eligible(p)]
     page_by_url = {p["url"].rstrip("/"): p for p in pages_200}
     
     # Existing links lookup set: (source_norm, target_norm)
@@ -488,7 +502,8 @@ class ContentAgent:
         crawl_pages: List[Dict[str, Any]],
         crawl_links: List[Dict[str, Any]],
         research_snapshot: Dict[str, Any],
-        competitor_pages: List[Dict[str, Any]] = None
+        competitor_pages: List[Dict[str, Any]] = None,
+        force_fallback: bool = False
     ) -> Tuple[ContentAgentReport, str, float, Optional[str], Optional[str]]:
         """Returns (report, mode, cost_usd, failure_reason, model_used)."""
         competitor_pages = competitor_pages or []
@@ -500,7 +515,13 @@ class ContentAgent:
         # 1. Deterministic Internal Link Engine
         internal_links = compute_internal_link_suggestions(crawl_pages, crawl_links, gsc_queries)
 
-        if settings.GEMINI_API_KEY:
+        has_gsc_data = bool(
+            research_snapshot.get("has_gsc_data")
+            or research_snapshot.get("total_queries_analyzed", 0) > 0
+            or len(research_snapshot.get("question_queries", [])) > 0
+        )
+
+        if not force_fallback and settings.GEMINI_API_KEY:
             models = settings.gemini_model_list
             errors_by_model = []
             for model_name in models:
@@ -510,6 +531,8 @@ class ContentAgent:
                     )
                     report.tokens_prompt = p_tokens
                     report.tokens_completion = c_tokens
+                    if not has_gsc_data:
+                        report.briefs = []
                     cls._enforce_character_limits(report)
                     return report, "llm", cost, None, model_name
                 except Exception as e:
@@ -518,13 +541,18 @@ class ContentAgent:
                     errors_by_model.append(err_msg)
 
             failure_reason = "All models failed -> " + "; ".join(errors_by_model)
+        elif force_fallback:
+            failure_reason = "Cost cap reached; deterministic fallback invoked."
         else:
             failure_reason = "GEMINI_API_KEY is not configured in .env"
 
+        mode = "fallback_cost_cap" if force_fallback else "fallback"
         print(f"ContentAgent falling back to deterministic synthesizer: {failure_reason}")
         report = cls._run_deterministic(verified_research, crawl_pages, internal_links, research_snapshot, competitor_pages)
+        if not has_gsc_data:
+            report.briefs = []
         cls._enforce_character_limits(report)
-        return report, "fallback", 0.0, failure_reason, None
+        return report, mode, 0.0, failure_reason, None
 
     @classmethod
     def _enforce_character_limits(cls, report: ContentAgentReport):
@@ -553,44 +581,56 @@ class ContentAgent:
         briefs: List[ContentBrief] = []
         rewrites: List[OnPageRewrite] = []
 
-        # Real questions pool from GSC
-        real_questions = [q["query"] for q in research_snapshot.get("question_queries", []) if q.get("query")]
+        # Content briefs are GSC-gated: with no Search Console data, generate none
+        has_gsc_data = bool(
+            research_snapshot.get("has_gsc_data")
+            or research_snapshot.get("total_queries_analyzed", 0) > 0
+            or len(research_snapshot.get("question_queries", [])) > 0
+        )
 
-        # Generate briefs for top gap/question opportunities (up to 5)
-        clusters = research_snapshot.get("query_clusters", [])
-        gap_opps = [o for o in verified_research if o.type in ("gap", "question")]
-        target_clusters = gap_opps[:5] if gap_opps else [
-            type("MockOpp", (), {"headline": cl["head_term"], "type": "gap"})() for cl in clusters[:3]
-        ]
+        if has_gsc_data:
+            # Real questions pool from GSC
+            real_questions = [q["query"] for q in research_snapshot.get("question_queries", []) if q.get("query")]
 
-        for idx, opp in enumerate(target_clusters, start=1):
-            term = opp.headline.replace("Content Gap Opportunity: Target '", "").replace("'", "").split("(")[0].strip()
-            matched_cluster = next((c for c in clusters if c.get("head_term", "").lower() == term.lower()), {})
-            intent = matched_cluster.get("intent", "informational")
+            # Generate briefs for top gap/question opportunities (up to 5)
+            clusters = research_snapshot.get("query_clusters", [])
+            gap_opps = [o for o in verified_research if o.type in ("gap", "question")]
+            target_clusters = gap_opps[:5] if gap_opps else [
+                type("MockOpp", (), {"headline": cl["head_term"], "type": "gap"})() for cl in clusters[:3]
+            ]
 
-            # Questions pool
-            q_list = [q for q in real_questions if any(w in q.lower() for w in term.lower().split())]
-            if not q_list:
-                q_list = real_questions[:2] if real_questions else []
+            for idx, opp in enumerate(target_clusters, start=1):
+                term = opp.headline.replace("Content Gap Opportunity: Target '", "").replace("'", "").split("(")[0].strip()
+                matched_cluster = next((c for c in clusters if c.get("head_term", "").lower() == term.lower()), {})
+                intent = matched_cluster.get("intent", "informational")
+                source_url = matched_cluster.get("landing_pages", [""])[0] if matched_cluster.get("landing_pages") else (crawl_pages[0]["url"] if crawl_pages else "")
+                source_text = term
 
-            briefs.append(ContentBrief(
-                target_cluster=term or f"SEO Optimization Topic {idx}",
-                intent=intent,
-                suggested_title=f"{term.title()}: Complete Guide"[:60],
-                suggested_meta=f"Explore verified solutions, strategies, and key insights regarding {term}. Learn how to optimize results."[:155],
-                h1=f"Ultimate Guide to {term.title()}",
-                outline=[
-                    f"Understanding {term.title()}",
-                    f"Key Benefits and Best Practices",
-                    f"Common Mistakes to Avoid",
-                    f"Strategic Implementation Plan"
-                ],
-                questions_to_answer=q_list[:3],
-                schema_suggestion="Article" if intent == "informational" else "Product",
-                internal_links=[l.target_url for l in internal_links[:2]],
-                competitor_notes="Competitor coverage identified on-page headings without traffic estimates." if competitor_pages else None,
-                notes="Developed from verified Search Console impression data."
-            ))
+                # Questions pool
+                q_list = [q for q in real_questions if any(w in q.lower() for w in term.lower().split())]
+                if not q_list:
+                    q_list = real_questions[:2] if real_questions else []
+
+                briefs.append(ContentBrief(
+                    target_cluster=term or f"SEO Optimization Topic {idx}",
+                    intent=intent,
+                    suggested_title=f"{term.title()}: Complete Guide"[:60],
+                    suggested_meta=f"Explore verified solutions, strategies, and key insights regarding {term}. Learn how to optimize results."[:155],
+                    h1=f"Ultimate Guide to {term.title()}",
+                    outline=[
+                        f"Understanding {term.title()}",
+                        f"Key Benefits and Best Practices",
+                        f"Common Mistakes to Avoid",
+                        f"Strategic Implementation Plan"
+                    ],
+                    questions_to_answer=q_list[:3],
+                    schema_suggestion="Article" if intent == "informational" else "Product",
+                    internal_links=[l.target_url for l in internal_links[:2]],
+                    competitor_notes="Competitor coverage identified on-page headings without traffic estimates." if competitor_pages else None,
+                    notes=f"Source URL: {source_url} | Query: {source_text}",
+                    source_url=source_url,
+                    source_text=source_text
+                ))
 
         # Collect existing metas of other pages to guard against near-duplicate rewrites
         existing_other_metas = [p.get("meta_desc") for p in crawl_pages if p.get("meta_desc")]

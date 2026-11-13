@@ -208,14 +208,13 @@ class CodeVerifier:
 
     @classmethod
     def _validate_llms_txt(cls, content: str, crawl_pages: List[Dict[str, Any]]) -> Tuple[str, Optional[str]]:
-        lines = [l.strip() for l in content.splitlines() if l.strip() and not l.strip().startswith("# Generated")]
+        lines = [l.strip() for l in content.splitlines() if l.strip()]
         if not lines:
             return "failed", "llms.txt is empty."
 
-        # Must have an H1 header
-        has_h1 = any(l.startswith("# ") for l in lines)
-        if not has_h1:
-            return "failed", "llms.txt missing top-level H1 site name."
+        # Must have an H1 header as the very first line (nothing before H1)
+        if not lines[0].startswith("# "):
+            return "failed", f"llms.txt must begin directly with top-level H1 '# SiteName', got: '{lines[0]}'."
 
         # Extract markdown links: [text](url)
         crawled_urls = {p["url"].rstrip("/") for p in crawl_pages if p.get("status_code") == 200 and p.get("indexable")}

@@ -83,7 +83,12 @@ def parse_html_page(
 
     # Title
     title_tag = soup.find("title")
-    title = title_tag.get_text(strip=True) if title_tag else None
+    if title_tag:
+        raw_t = title_tag.get_text(separator=" ", strip=True)
+        raw_t = re.sub(r"<[^>]+>", " ", raw_t)
+        title = re.sub(r"\s+", " ", raw_t).strip()
+    else:
+        title = None
 
     # Meta Description
     meta_desc_tag = soup.find("meta", attrs={"name": re.compile(r"^description$", re.I)})
@@ -91,13 +96,13 @@ def parse_html_page(
         meta_desc_tag = soup.find("meta", attrs={"property": re.compile(r"^og:description$", re.I)})
     meta_desc = meta_desc_tag.get("content", "").strip() if meta_desc_tag else None
 
-    # Headings
+    # Headings (preserve spacing across inline elements/spans)
     h1_tag = soup.find("h1")
-    h1 = h1_tag.get_text(strip=True) if h1_tag else None
+    h1 = re.sub(r"\s+", " ", h1_tag.get_text(separator=" ", strip=True)).strip() if h1_tag else None
 
     headings: List[Dict[str, str]] = []
     for h in soup.find_all(["h1", "h2", "h3"]):
-        h_text = h.get_text(strip=True)
+        h_text = re.sub(r"\s+", " ", h.get_text(separator=" ", strip=True)).strip()
         if h_text:
             headings.append({"level": h.name.lower(), "text": h_text})
 
@@ -127,7 +132,7 @@ def parse_html_page(
     
     for a in soup.find_all("a", href=True):
         href = a.get("href")
-        anchor = a.get_text(strip=True)
+        anchor = re.sub(r"\s+", " ", a.get_text(separator=" ", strip=True)).strip()
         normalized = normalize_url(href, base_url=current_url)
         if normalized:
             if normalized not in outlinks_list:

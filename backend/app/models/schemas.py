@@ -8,6 +8,7 @@ class JobCreate(BaseModel):
     max_pages: int = Field(default=50, ge=1, le=200, description="Max pages limit (Rule capped at 200)")
     competitor_domains: Optional[List[str]] = Field(default=None, description="Optional competitor domains (up to 3)")
     is_demo: bool = Field(default=False, description="Whether this is a demo job")
+    fresh_psi: bool = Field(default=False, description="Fresh PSI run (ignore 24-hour cache)")
     project_id: Optional[str] = None
 
 class CrawlPage(BaseModel):

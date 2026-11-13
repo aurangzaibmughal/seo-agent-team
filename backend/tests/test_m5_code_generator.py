@@ -19,14 +19,31 @@ from app.agents.orchestrator import run_full_pipeline
 from app.core.db import DBManager
 
 
-# 1. Next.js file path mapping tests
+# 1. Next.js file path mapping tests (Batch A.2: snippets never overwrite real app files)
 def test_nextjs_filepath_mapping():
-    assert map_url_to_nextjs_path("https://example.com/", "app")["file_path"] == "app/page.tsx"
-    assert map_url_to_nextjs_path("https://example.com/", "pages")["file_path"] == "pages/index.tsx"
-    assert map_url_to_nextjs_path("https://example.com/portfolio", "app")["file_path"] == "app/portfolio/page.tsx"
-    assert map_url_to_nextjs_path("https://example.com/portfolio", "pages")["file_path"] == "pages/portfolio.tsx"
-    assert map_url_to_nextjs_path("https://example.com/blog/seo-tips", "app")["file_path"] == "app/blog/[slug]/page.tsx"
-    assert map_url_to_nextjs_path("https://example.com/blog/seo-tips", "pages")["file_path"] == "pages/blog/[slug].tsx"
+    m_home_app = map_url_to_nextjs_path("https://example.com/", "app")
+    assert m_home_app["file_path"] == "app/page.metadata.snippet.tsx"
+    assert m_home_app["target_file"] == "app/page.tsx"
+
+    m_home_pages = map_url_to_nextjs_path("https://example.com/", "pages")
+    assert m_home_pages["file_path"] == "pages/index.metadata.snippet.tsx"
+    assert m_home_pages["target_file"] == "pages/index.tsx"
+
+    m_port_app = map_url_to_nextjs_path("https://example.com/portfolio", "app")
+    assert m_port_app["file_path"] == "app/portfolio/page.metadata.snippet.tsx"
+    assert m_port_app["target_file"] == "app/portfolio/page.tsx"
+
+    m_port_pages = map_url_to_nextjs_path("https://example.com/portfolio", "pages")
+    assert m_port_pages["file_path"] == "pages/portfolio.metadata.snippet.tsx"
+    assert m_port_pages["target_file"] == "pages/portfolio.tsx"
+
+    m_blog_app = map_url_to_nextjs_path("https://example.com/blog/seo-tips", "app")
+    assert m_blog_app["file_path"] == "app/blog/[slug]/page.metadata.snippet.tsx"
+    assert m_blog_app["target_file"] == "app/blog/[slug]/page.tsx"
+
+    m_blog_pages = map_url_to_nextjs_path("https://example.com/blog/seo-tips", "pages")
+    assert m_blog_pages["file_path"] == "pages/blog/[slug].metadata.snippet.tsx"
+    assert m_blog_pages["target_file"] == "pages/blog/[slug].tsx"
 
 
 # 2. JSON-LD Builder & No Fabricated Data tests

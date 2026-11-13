@@ -21,6 +21,7 @@ from app.agents.technical_agent import (
     CANONICAL_TO_OTHER_FIX_HINT,
     get_deterministic_severity
 )
+from app.core.classification import classify_page_type, is_admin_page
 
 def extract_numbers_from_text(text: str) -> List[float]:
     """Extracts numeric values from a narrative string, ignoring dates, timeframes, and compound rank labels."""
@@ -292,7 +293,7 @@ class Verifier:
                     sev = get_deterministic_severity(ctype, len(g["urls"]), total_crawled)
                     hint = CANONICAL_TO_OTHER_FIX_HINT if ctype == "canonical_to_other" else g["fix_hint"]
                     verified_issues.append(TechnicalIssue(
-                        id=f"T-FB-{fb_idx:03d}",
+                        id=f"T-{fb_idx:03d}",
                         type=ctype,
                         severity=sev,
                         impact=g["impact"],
@@ -305,6 +306,10 @@ class Verifier:
                         source="fallback_rule"
                     ))
                     fb_idx += 1
+
+        # Renumber all verified issues strictly sequentially T-001, T-002... without any FB in ID
+        for idx, iss in enumerate(verified_issues, 1):
+            iss.id = f"T-{idx:03d}"
 
         total_checked = len(issues) + len([r for r in rejected_issues if r.get("issue_id") not in [i.id for i in issues]])
 
@@ -386,6 +391,18 @@ class Verifier:
                 elif issue.type == "noindex_page":
                     if row.get("indexability_status") not in ("noindex_meta", "noindex_header"):
                         return False, f"Claim false: Indexability status is '{row.get('indexability_status')}'."
+                    if classify_page_type(row.get("url")) == "utility":
+                        return False, "Claim false: Utility/private pages (login, signup, admin, cart) SHOULD be noindex; not an issue."
+                elif issue.type == "indexable_admin_page":
+                    if row.get("indexability_status") in ("noindex_meta", "noindex_header"):
+                        return False, f"Claim false: Admin page is properly noindexed."
+                    if not is_admin_page(row.get("url")):
+                        return False, f"Claim false: URL '{row.get('url')}' is not an admin portal."
+                elif issue.type == "indexable_private_page":
+                    if row.get("indexability_status") in ("noindex_meta", "noindex_header"):
+                        return False, f"Claim false: Private page is properly noindexed."
+                    if classify_page_type(row.get("url")) != "utility":
+                        return False, f"Claim false: URL '{row.get('url')}' is a content page."
                 elif issue.type == "canonical_to_other":
                     if not canonical or canonical.rstrip('/') == row.get("url", "").rstrip('/'):
                         return False, f"Claim false: Canonical is self-referential or empty ('{canonical}')."
@@ -1049,6 +1066,16 @@ class Verifier:
                 continue
             if (s_norm, t_norm) in existing_links:
                 rejected_l.append({"link": f"{l.source_url} -> {l.target_url}", "reason": "Link already exists on the live website."})
+                continue
+
+            # Never suggest internal links to or from noindex pages or utility pages
+            src_p = page_by_url.get(s_norm, {})
+            tgt_p = page_by_url.get(t_norm, {})
+            if classify_page_type(s_norm) == "utility" or src_p.get("indexability_status") in ("noindex_meta", "noindex_header"):
+                rejected_l.append({"link": f"{l.source_url} -> {l.target_url}", "reason": "Source page is a utility or noindex page; cannot suggest internal links from utility/noindex pages."})
+                continue
+            if classify_page_type(t_norm) == "utility" or tgt_p.get("indexability_status") in ("noindex_meta", "noindex_header"):
+                rejected_l.append({"link": f"{l.source_url} -> {l.target_url}", "reason": "Target page is a utility or noindex page; cannot suggest internal links to utility/noindex pages."})
                 continue
 
             src_counts[s_norm] = src_counts.get(s_norm, 0) + 1

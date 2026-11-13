@@ -2,7 +2,7 @@ import os
 import json
 from collections import Counter
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from fastapi.responses import FileResponse, Response
 from typing import List, Dict, Any, Optional
 
@@ -17,21 +17,44 @@ from app.agents.verifier import Verifier
 from app.agents.monitor_agent import MonitorAgent
 from app.services.reporter import ReportExporter
 from app.services.performance_metrics import compute_performance_metrics
+from app.core.security import validate_safe_url, SSRFSecurityError, job_creation_limiter, get_client_ip
+from fastapi import Request
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs & Agents"])
 
 @router.post("", response_model=Dict[str, Any])
-async def create_job(payload: JobCreate, background_tasks: BackgroundTasks):
+async def create_job(payload: JobCreate, background_tasks: BackgroundTasks, request: Request):
+    # 1. Rate limit check (Max 5 jobs per minute per client)
+    client_ip = get_client_ip(request)
+    allowed, retry_after = job_creation_limiter.is_allowed(client_ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded: maximum 5 jobs per minute. Please retry after {retry_after} seconds.",
+            headers={"Retry-After": str(retry_after)}
+        )
+
+    # 2. Production Demo Guard
+    if settings.ENVIRONMENT == "production" and payload.is_demo:
+        raise HTTPException(status_code=400, detail="Demo mode seeding is disabled in production environment.")
+
     url = payload.url.strip()
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
+
+    # 3. SSRF Guard
+    try:
+        url = validate_safe_url(url)
+    except SSRFSecurityError as ssrf_err:
+        raise HTTPException(status_code=400, detail=f"Target URL failed security check: {ssrf_err}")
 
     job = DBManager.create_job(
         target_url=url,
         max_pages=payload.max_pages,
         project_id=payload.project_id,
         competitor_domains=payload.competitor_domains,
-        is_demo=payload.is_demo
+        is_demo=payload.is_demo,
+        fresh_psi=payload.fresh_psi
     )
     background_tasks.add_task(run_full_pipeline, job["id"], url, payload.max_pages, payload.project_id)
     
@@ -41,12 +64,59 @@ async def create_job(payload: JobCreate, background_tasks: BackgroundTasks):
         "job": job
     }
 
+@router.get("/history")
+async def get_jobs_history(limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
+    """Returns paginated history of audit jobs with costs, statuses, issue counts, and agent modes."""
+    jobs = DBManager.get_jobs_history(limit=limit, offset=offset)
+    return {"jobs": jobs, "limit": limit, "offset": offset, "count": len(jobs)}
+
 @router.get("/{job_id}", response_model=Dict[str, Any])
 async def get_job_status(job_id: str):
     job = DBManager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+@router.delete("/{job_id}")
+async def delete_job(job_id: str, confirm: bool = Query(False)):
+    """Deletes an audit job and purges all associated data across tables."""
+    if not confirm:
+        raise HTTPException(status_code=400, detail="Explicit confirmation required to delete job. Pass ?confirm=true.")
+    job = DBManager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    DBManager.delete_job(job_id)
+    return {"status": "success", "message": f"Job {job_id} and all related records purged"}
+
+@router.post("/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    """Cancels an active or pending audit job gracefully."""
+    job = DBManager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("status") in ("completed", "failed", "cancelled"):
+        return {"status": "already_terminated", "job_status": job.get("status")}
+    DBManager.update_job(job_id, {"status": "cancelled", "error": "Job was cancelled by user"})
+    return {"status": "success", "message": f"Job {job_id} cancelled successfully"}
+
+@router.post("/{job_id}/resume")
+async def resume_job(job_id: str, background_tasks: BackgroundTasks):
+    """Resumes an interrupted, cancelled, or failed job from its last completed stage."""
+    job = DBManager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("status") not in ("interrupted", "failed", "cancelled"):
+        raise HTTPException(status_code=400, detail=f"Cannot resume job with status '{job.get('status')}'")
+    DBManager.update_job(job_id, {"status": "resuming", "error": None})
+    background_tasks.add_task(
+        run_full_pipeline,
+        job_id=job_id,
+        target_url=job["target_url"],
+        max_pages=job.get("max_pages", 50),
+        project_id=job.get("project_id"),
+        resume=True
+    )
+    return {"status": "success", "message": f"Job {job_id} resumed in background from last stage"}
 
 @router.get("/{job_id}/pages", response_model=List[Dict[str, Any]])
 async def get_job_pages(job_id: str, limit: int = 500):
@@ -253,12 +323,24 @@ async def inject_fake_issue(job_id: str):
 @router.get("/{job_id}/export/{format_type}")
 async def export_report_file(job_id: str, format_type: str):
     format_type = format_type.lower()
-    if format_type not in ("pdf", "csv", "xlsx"):
-        raise HTTPException(status_code=400, detail="Invalid format. Supported: pdf, csv, xlsx")
+    if format_type not in ("pdf", "csv", "xlsx", "asana"):
+        raise HTTPException(status_code=400, detail="Invalid format. Supported: pdf, csv, xlsx, asana")
 
     job = DBManager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    if format_type == "asana":
+        from app.services.asana_service import AsanaService
+        csv_content = AsanaService.generate_asana_csv(job_id)
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="asana_import_{job_id[:8]}.csv"',
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
 
     is_demo = bool(job.get("is_demo", 0))
 
@@ -370,6 +452,28 @@ async def get_job_stats(job_id: str):
         except Exception:
             failed_fetches = []
 
+    # Sitemap Comparison URL Lists
+    sm_entries = []
+    if job.get("sitemap_entries_json"):
+        try:
+            sm_entries = json.loads(job["sitemap_entries_json"])
+        except Exception:
+            sm_entries = []
+    sitemap_stale_urls = [
+        {"url": e.get("url"), "status_code": e.get("status_code", 404)}
+        for e in sm_entries
+        if (isinstance(e.get("status_code"), int) and (e.get("status_code", 0) >= 400 or e.get("status_code", 0) == 0)) or isinstance(e.get("status_code"), str)
+    ]
+    sm_norm_set = {(e.get("url") or "").rstrip("/") for e in sm_entries}
+    sitemap_missing_urls = [
+        {"url": p.get("url"), "title": p.get("title") or "Page"}
+        for p in pages
+        if p.get("status_code") == 200
+        and p.get("indexable")
+        and (not p.get("canonical") or p.get("canonical", "").rstrip("/") == p.get("url", "").rstrip("/"))
+        and p.get("url", "").rstrip("/") not in sm_norm_set
+    ]
+
     return {
         "total_pages": total,
         "status_200": status_200,
@@ -388,9 +492,13 @@ async def get_job_stats(job_id: str):
         "psi_status": job.get("psi_status", "pending"),
         "is_demo": bool(job.get("is_demo", 0)),
         "crawl_incomplete": bool(job.get("crawl_incomplete", 0)),
+        "completeness_status": job.get("completeness_status", "complete"),
+        "incomplete_reasons": json.loads(job.get("incomplete_reasons_json", "[]")) if isinstance(job.get("incomplete_reasons_json"), str) else (job.get("incomplete_reasons_json") or []),
         "failed_fetches": failed_fetches,
         "psi_mobile_score": mobile_psi["performance_score"] if mobile_psi else None,
         "psi_desktop_score": desktop_psi["performance_score"] if desktop_psi else None,
+        "psi_is_cached": bool(mobile_psi and mobile_psi.get("is_cached")),
+        "psi_cached_measured_at": (mobile_psi.get("cached_measured_at") or mobile_psi.get("fetched_at")) if (mobile_psi and mobile_psi.get("is_cached")) else None,
         "issues_high": high_issues,
         "issues_medium": medium_issues,
         "issues_low": low_issues,
@@ -414,6 +522,8 @@ async def get_job_stats(job_id: str):
         "title_too_long_urls": title_too_long_pages,
         "meta_borderline_urls": meta_borderline_pages,
         "meta_too_long_urls": meta_too_long_pages,
+        "sitemap_stale_urls": sitemap_stale_urls,
+        "sitemap_missing_urls": sitemap_missing_urls,
         # Platform info
         "detected_platform": job.get("detected_platform") or job.get("platform") or "nextjs",
         "detected_platform_confidence": job.get("detected_platform_confidence") or job.get("platform_confidence") or 1.0,
@@ -443,7 +553,7 @@ async def get_job_code_artifacts(job_id: str):
 
 
 @router.get("/{job_id}/code-zip")
-async def download_code_zip(job_id: str):
+async def download_code_zip(job_id: str, include_unreviewed: bool = Query(False)):
     """Generates and serves the downloadable ZIP archive of validated SEO code artifacts."""
     job = DBManager.get_job(job_id)
     if not job:
@@ -472,7 +582,8 @@ async def download_code_zip(job_id: str):
         platform=platform,
         artifacts=artifacts,
         validation_results=val_results,
-        is_demo=is_demo
+        is_demo=is_demo,
+        include_unreviewed=include_unreviewed
     )
 
     clean_domain = domain.replace(":", "_").replace("/", "_")
@@ -491,6 +602,7 @@ async def download_code_zip(job_id: str):
 class PlatformOverrideRequest(BaseModel):
     platform: str
     router_type: Optional[str] = "app"
+    nextjs_version: Optional[str] = "15+"
 
 
 @router.post("/{job_id}/platform")
@@ -556,6 +668,7 @@ async def override_job_platform(job_id: str, payload: PlatformOverrideRequest):
         verified_rewrites=rewrites,
         internal_links=internal_links,
         router_type=router,
+        nextjs_version=payload.nextjs_version or "15+",
         is_demo=bool(job.get("is_demo", 0))
     )
 

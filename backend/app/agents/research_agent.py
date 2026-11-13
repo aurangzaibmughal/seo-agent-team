@@ -13,9 +13,15 @@ class ResearchAgent:
     async def run(
         cls,
         snapshot_id: str,
-        snapshot_data: Dict[str, Any]
+        snapshot_data: Dict[str, Any],
+        force_fallback: bool = False
     ) -> Tuple[ResearchAgentReport, str, float, Optional[str], Optional[str]]:
         """Returns (report, mode, cost_usd, failure_reason, model_used)."""
+        if force_fallback:
+            failure_reason = "Cost cap exceeded; deterministic fallback forced"
+            report = cls._run_deterministic(snapshot_id, snapshot_data)
+            return report, "fallback_cost_cap", 0.0, failure_reason, None
+
         if settings.GEMINI_API_KEY:
             models = settings.gemini_model_list
             errors_by_model = []

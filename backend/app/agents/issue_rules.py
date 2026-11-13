@@ -1,7 +1,38 @@
 from typing import List, Dict, Any, Optional
 from collections import defaultdict
 import difflib
+import re
 from urllib.parse import urlparse
+from app.core.classification import classify_page_type, is_admin_page
+
+def infer_brand_name(crawl_pages: List[Dict[str, Any]], brand_hint: Optional[str] = None) -> Optional[str]:
+    """Infers the brand or project name from titles or URL domain."""
+    if brand_hint and brand_hint.strip():
+        return brand_hint.strip()
+
+    suffix_counts: Dict[str, int] = defaultdict(int)
+    for p in crawl_pages:
+        title = p.get("title") or ""
+        parts = re.split(r"[|\-—–]", title)
+        if len(parts) > 1:
+            last_part = parts[-1].strip()
+            if len(last_part) >= 2:
+                suffix_counts[last_part] += 1
+
+    if suffix_counts:
+        top_suffix, count = max(suffix_counts.items(), key=lambda x: x[1])
+        if count >= 2:
+            return top_suffix
+
+    for p in crawl_pages:
+        u = p.get("url") or ""
+        parsed = urlparse(u)
+        if parsed.netloc:
+            domain_part = parsed.netloc.split(".")[0]
+            raw_token = domain_part.split("-")[0]
+            if len(raw_token) >= 3:
+                return raw_token
+    return None
 
 def find_closest_slug(target_url: str, valid_urls: List[str]) -> Optional[str]:
     """Finds the closest existing crawled 200 URL for a broken 4xx URL using slug similarity."""
@@ -40,10 +71,14 @@ def find_closest_slug(target_url: str, valid_urls: List[str]) -> Optional[str]:
 def detect_issues_from_data(
     crawl_pages: List[Dict[str, Any]],
     crawl_links: List[Dict[str, Any]],
-    psi_results: List[Dict[str, Any]]
+    psi_results: List[Dict[str, Any]],
+    brand_name: Optional[str] = None,
+    sitemap_entries: Optional[List[Dict[str, Any]]] = None,
+    sitemap_urls: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
     """Deterministic, rule-based SEO issue detector (Plain Python, No LLM)."""
     candidates: List[Dict[str, Any]] = []
+    resolved_brand = infer_brand_name(crawl_pages, brand_name)
 
     # Map inlinks count
     inlink_map: Dict[str, int] = defaultdict(int)
@@ -127,6 +162,19 @@ def detect_issues_from_data(
                     })
                 title_to_pages[title.strip().lower()].append(page)
 
+                # Brand repeated in title check
+                if resolved_brand and title:
+                    pattern = r"\b" + re.escape(resolved_brand) + r"\b"
+                    b_matches = re.findall(pattern, title, re.IGNORECASE)
+                    if len(b_matches) >= 2:
+                        candidates.append({
+                            "type": "brand_repeated_in_title",
+                            "urls": [url],
+                            "brand": resolved_brand,
+                            "occurrences": len(b_matches),
+                            "evidence": [{"table": "crawl_pages", "id": pid, "field": "title", "value": title}],
+                        })
+
             # Missing Meta Description
             if not meta_desc or len(meta_desc.strip()) == 0:
                 candidates.append({
@@ -172,13 +220,30 @@ def detect_issues_from_data(
                     "evidence": [{"table": "crawl_pages", "id": pid, "field": "canonical", "value": canonical}],
                 })
 
-            # Noindex page
+            # Noindex page: Only content pages should be flagged!
+            # Utility pages (login, signup, admin, cart, account) SHOULD be noindexed (positive practice).
             if index_status in ("noindex_meta", "noindex_header"):
-                candidates.append({
-                    "type": "noindex_page",
-                    "urls": [url],
-                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "indexability_status", "value": index_status}],
-                })
+                if classify_page_type(url) == "content":
+                    candidates.append({
+                        "type": "noindex_page",
+                        "urls": [url],
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "indexability_status", "value": index_status}],
+                    })
+            else:
+                # Page is indexable: Flag private/admin pages that SHOULD NOT be indexable
+                if classify_page_type(url) == "utility" and indexable is not False:
+                    if is_admin_page(url):
+                        candidates.append({
+                            "type": "indexable_admin_page",
+                            "urls": [url],
+                            "evidence": [{"table": "crawl_pages", "id": pid, "field": "indexability_status", "value": index_status}],
+                        })
+                    else:
+                        candidates.append({
+                            "type": "indexable_private_page",
+                            "urls": [url],
+                            "evidence": [{"table": "crawl_pages", "id": pid, "field": "indexability_status", "value": index_status}],
+                        })
 
             # Orphan page (crawled with 0 inlinks, excluding target start page if needed)
             norm_url = url.rstrip("/")
@@ -268,6 +333,73 @@ def detect_issues_from_data(
 
     if psi_results and not speed_issues_found:
         print("PSI ran, no speed issues found")
+
+    # 3. Sitemap Comparison Rules
+    if sitemap_entries:
+        stale_entries = []
+        for e in sitemap_entries:
+            code = e.get("status_code", 0)
+            if (isinstance(code, int) and (code >= 400 or code == 0)) or isinstance(code, str):
+                stale_entries.append(e)
+
+        if stale_entries:
+            candidates.append({
+                "type": "sitemap_lists_non_existent_url",
+                "urls": [e["url"] for e in stale_entries],
+                "severity": "high" if len(stale_entries) >= 5 else "medium",
+                "stale_entries": stale_entries,
+                "evidence": [
+                    {
+                        "table": "sitemap.xml",
+                        "id": e["url"],
+                        "field": "status_code",
+                        "value": e.get("status_code", 404),
+                    }
+                    for e in stale_entries
+                ],
+            })
+
+    # Rule 2: crawled_page_missing_from_sitemap
+    known_sitemap_urls = set()
+    if sitemap_entries:
+        for e in sitemap_entries:
+            u_val = e.get("url") or ""
+            if u_val:
+                known_sitemap_urls.add(u_val.rstrip("/"))
+    if sitemap_urls:
+        for su in sitemap_urls:
+            if su:
+                known_sitemap_urls.add(su.rstrip("/"))
+
+    if known_sitemap_urls:
+        missing_crawled_pages = []
+        for p in crawl_pages:
+            if p.get("status_code") != 200:
+                continue
+            if not p.get("indexable"):
+                continue
+            canonical = p.get("canonical")
+            p_url = p.get("url", "")
+            if canonical and canonical.rstrip("/") != p_url.rstrip("/"):
+                continue
+            if p_url.rstrip("/") not in known_sitemap_urls:
+                missing_crawled_pages.append(p)
+
+        if missing_crawled_pages:
+            candidates.append({
+                "type": "crawled_page_missing_from_sitemap",
+                "urls": [p["url"] for p in missing_crawled_pages],
+                "severity": "medium",
+                "evidence": [
+                    {
+                        "table": "crawl_pages",
+                        "id": p.get("id"),
+                        "field": "url",
+                        "value": p.get("url"),
+                    }
+                    for p in missing_crawled_pages
+                ],
+            })
 
     # Assign stable candidate IDs (C-001, C-002, ...)
     for idx, c in enumerate(candidates, start=1):

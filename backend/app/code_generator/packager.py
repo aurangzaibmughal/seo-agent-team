@@ -17,9 +17,29 @@ class CodePackager:
         platform: str,
         artifacts: List[GeneratedArtifact],
         validation_results: List[Dict[str, Any]],
-        is_demo: bool = False
+        is_demo: bool = False,
+        include_unreviewed: bool = False
     ) -> bytes:
-        """Generates the downloadable ZIP bundle as in-memory bytes."""
+        """Generates the downloadable ZIP bundle as in-memory bytes, filtering for approved/edited artifacts by default."""
+        from app.core.db import DBManager
+        reviews = DBManager.get_review_items(job_id, item_type="code_artifact")
+        if reviews:
+            rev_map = {r["item_ref"]: r for r in reviews}
+            filtered_artifacts = []
+            for art in artifacts:
+                rev = rev_map.get(art.file_path)
+                if not rev:
+                    filtered_artifacts.append(art)
+                    continue
+                if rev.get("status") in ("approved", "edited"):
+                    filtered_artifacts.append(art)
+                elif include_unreviewed:
+                    art_copy = art.model_copy(deep=True) if hasattr(art, "model_copy") else art
+                    art_copy.title = f"[UNREVIEWED] {art.title}"
+                    art_copy.status = "[UNREVIEWED] pending"
+                    filtered_artifacts.append(art_copy)
+            artifacts = filtered_artifacts
+
         zip_buffer = io.BytesIO()
         watermark = "\n> [!CAUTION]\n> **DEMO DATA WATERMARK**: This archive contains synthetic fixtures generated in demo mode. Review and verify before applying to production.\n" if is_demo else ""
 
@@ -65,8 +85,9 @@ class CodePackager:
    ```bash
    git checkout -b chore/seo-meta-and-schema-fixes
    ```
-2. **Take a full backup** of your existing codebase and database configuration.
-3. Work in your local development or staging environment before opening a Pull Request.
+2. **MERGE, Do Not Overwrite:** For Next.js, metadata files are provided as snippets (`*.metadata.snippet.tsx`). Merge the `export const metadata` blocks into your existing `layout.tsx` or `page.tsx` files. Never replace entire existing components.
+3. **Take a full backup** of your existing codebase and database configuration.
+4. Work in your local development or staging environment before opening a Pull Request.
 
 ---
 
@@ -96,33 +117,43 @@ class CodePackager:
 ---
 
 ## 4. Search Console & Verification
-1. Once deployed to production, submit the new sitemap via **Google Search Console > Sitemaps > Add a new sitemap (`/sitemap.xml`)**.
+1. **Submit Sitemap in Google Search Console:**
+   - Navigate to **Google Search Console > Sitemaps > Add a new sitemap**.
+   - Enter `/sitemap.xml` and click **Submit**.
+   - Verify that Google reports a 'Success' status and shows discovered URLs.
 2. Run a re-crawl in this application to confirm that technical issues (`T-xxx`) are resolved and zero 4xx/canonical/duplicate errors remain.
 
 ---
 
 ## 5. Rollback Procedure
-If any regression or build failure occurs:
-1. Revert the git feature branch:
-   ```bash
-   git revert HEAD
-   git push origin main
-   ```
-2. Restore your previous build or deployment checkpoint.
+If regressions or build failures occur on your feature branch:
+```bash
+git checkout main
+git branch -D chore/seo-meta-and-schema-fixes
+```
+If changes were already merged to `main`:
+```bash
+git revert <commit-hash>
+git push origin main
+```
 """
 
     @classmethod
     def _get_platform_specific_instructions(cls, platform: str) -> str:
         if platform == "nextjs":
-            return """- **App Router:**
-  - Copy `app/layout.tsx` metadata into your root layout.
-  - Place per-page metadata in corresponding route folders (e.g. `app/portfolio/page.tsx`).
-  - Place `app/sitemap.ts` and `app/robots.ts` in your `app/` directory (Next.js automatically generates `/sitemap.xml` and `/robots.txt` dynamically).
-  - Place `public/llms.txt` in your `public/` directory for static AI discovery.
-  - Add `components/JsonLd.tsx` for structured data injection.
-  - Append the `async redirects()` block to `next.config.js` for 301 redirect management."""
+            return """- **Next.js App Router (Single Recommended Approach):**
+  - **Sitemap & Robots (Post-Fix Coverage)**: Next.js App Router dynamically serves sitemaps and robots via TypeScript route handlers. Place `app/sitemap.ts` and `app/robots.ts` into your `app/` folder. Next.js will automatically serve `/sitemap.xml` and `/robots.txt`.
+    - **Included now**: 200 OK, indexable, self-canonical pages.
+    - **Included after fix**: Pages whose only problem is `canonical_to_other` (`/portfolio`, `/calculator`, `/track`), assuming the generated per-page self-referential canonical fix is applied.
+    - Note: In production, we recommend generating this sitemap directly from your site's own data source (database, CMS API, or MDX files). Do NOT combine with static XML/TXT files in `public/`.
+  - **Metadata Snippets**: MERGE the `export const metadata` snippet from `app/layout.metadata.snippet.tsx` into your root `app/layout.tsx`.
+  - **Per-Page Metadata**: MERGE snippet contents (`app/.../page.metadata.snippet.tsx`) into their respective `page.tsx` files.
+  - **Dynamic Route Skeleton**: For `/blog/[slug]`, MERGE the `generateMetadata` skeleton from `app/blog/[slug]/page.metadata.snippet.tsx` into `app/blog/[slug]/page.tsx`. Per-post SEO metadata is documented in `metadata_table.csv`.
+  - **Structured Data**: Import and use `components/JsonLd.tsx` to safely inject JSON-LD without XSS risk.
+  - **Static AI Discovery**: Place `public/llms.txt` in your `public/` folder so AI crawlers can access it at `/llms.txt`.
+  - **Redirects**: Append the `async redirects()` block to your existing `next.config.js`."""
         elif platform == "wordpress":
-            return """- **Theme Functions / Must-Use Plugin:**
+            return """- **WordPress Theme Functions / Must-Use Plugin:**
   - Place the `functions.php` snippet into your child theme or as an `mu-plugins/seo-schema.php` file.
   - Upload `robots.txt` and `llms.txt` to your site root directory.
   - Add the `.htaccess` rules to your Apache `.htaccess` file or import the CSV into the **Redirection** WordPress plugin."""
@@ -144,6 +175,9 @@ If any regression or build failure occurs:
         writer = csv.writer(output)
         writer.writerow(["file_path", "title", "artifact_type", "platform", "issues_addressed", "tasks_addressed", "validation_status", "validation_reason", "status"])
         for art in artifacts:
+            art_status = art.status
+            if "[UNREVIEWED]" in art.title and not art_status.startswith("[UNREVIEWED]"):
+                art_status = f"[UNREVIEWED] {art_status}"
             writer.writerow([
                 art.file_path,
                 art.title,
@@ -153,7 +187,7 @@ If any regression or build failure occurs:
                 ";".join(art.source_task_ids),
                 art.validation_status,
                 art.validation_reason or "",
-                art.status
+                art_status
             ])
         return output.getvalue()
 

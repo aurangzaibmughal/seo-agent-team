@@ -13,17 +13,21 @@ async def run_psi_for_url(
     job_id: str,
     url: str,
     strategy: str = "mobile",
-    max_retries: int = 3
+    max_retries: int = 3,
+    ignore_cache: bool = False
 ) -> Dict[str, Any]:
     """Runs PageSpeed Insights for a URL & strategy, with 24hr cache, sequential delays,
     and automatic retry with backoff and jitter on 429 / 5xx errors.
     """
-    # 1. Check 24-hour cache first
-    cached = DBManager.get_psi_cached(url, strategy)
-    if cached:
-        cached["job_id"] = job_id
-        DBManager.save_psi_result(cached)
-        return cached
+    # 1. Check 24-hour cache first (unless ignore_cache is True)
+    if not ignore_cache:
+        cached = DBManager.get_psi_cached(url, strategy)
+        if cached:
+            cached["job_id"] = job_id
+            cached["is_cached"] = True
+            cached["cached_measured_at"] = cached.get("fetched_at")
+            DBManager.save_psi_result(cached)
+            return cached
 
     result: Dict[str, Any] = {
         "job_id": job_id,
@@ -37,6 +41,8 @@ async def run_psi_for_url(
         "ttfb_ms": None,
         "raw_json": None,
         "error": None,
+        "is_cached": False,
+        "cached_measured_at": None,
         "fetched_at": datetime.now(timezone.utc).isoformat()
     }
 
@@ -149,7 +155,7 @@ async def run_psi_for_url(
     DBManager.save_psi_result(result)
     return result
 
-async def run_pagespeed_pipeline(job_id: str, target_url: str):
+async def run_pagespeed_pipeline(job_id: str, target_url: str, ignore_cache: bool = False):
     """Orchestrates PSI for homepage + up to 4 top inlink pages for mobile and desktop sequentially."""
     DBManager.update_job(job_id, {
         "status": "pagespeed",
@@ -179,14 +185,14 @@ async def run_pagespeed_pipeline(job_id: str, target_url: str):
                 await asyncio.sleep(2.0)
 
             # Mobile strategy
-            m_res = await run_psi_for_url(client, job_id, url, strategy="mobile")
+            m_res = await run_psi_for_url(client, job_id, url, strategy="mobile", ignore_cache=ignore_cache)
             results_status.append(m_res)
 
             # 2 second sequential delay between mobile and desktop calls
             await asyncio.sleep(2.0)
 
             # Desktop strategy
-            d_res = await run_psi_for_url(client, job_id, url, strategy="desktop")
+            d_res = await run_psi_for_url(client, job_id, url, strategy="desktop", ignore_cache=ignore_cache)
             results_status.append(d_res)
 
     success_cnt = sum(1 for r in results_status if r.get("performance_score") is not None)

@@ -9,6 +9,7 @@ import httpx
 from bs4 import BeautifulSoup
 from app.core.db import DBManager
 from app.crawler.parser import normalize_url, is_internal_url, parse_html_page
+from app.core.security import validate_safe_url, safe_fetch_url, SSRFSecurityError
 
 COMPETITOR_USER_AGENT = "Mozilla/5.0 (compatible; SEOAgentTeamCompetitorBot/1.0; +https://seo-agent-team.local)"
 
@@ -55,6 +56,7 @@ class CompetitorCrawler:
         if not domain.startswith(("http://", "https://")):
             domain = f"https://{domain}"
         self.start_url = domain
+        validate_safe_url(self.start_url)
         self.parsed_domain = urlparse(domain).netloc
         self.max_pages = min(max_pages, 30)
         self.visited: Set[str] = set()
@@ -72,7 +74,7 @@ class CompetitorCrawler:
             # 1. Check robots.txt
             robots_url = f"https://{self.parsed_domain}/robots.txt"
             try:
-                r_resp = await client.get(robots_url)
+                r_resp = await safe_fetch_url(client, robots_url, timeout=10.0)
                 if r_resp.status_code == 200:
                     self.rp.parse(r_resp.text.splitlines())
                 else:
@@ -83,7 +85,7 @@ class CompetitorCrawler:
             # 2. Check sitemap size
             sitemap_url = f"https://{self.parsed_domain}/sitemap.xml"
             try:
-                s_resp = await client.get(sitemap_url)
+                s_resp = await safe_fetch_url(client, sitemap_url, timeout=10.0)
                 if s_resp.status_code == 200 and "xml" in s_resp.headers.get("content-type", ""):
                     urls_in_sm = re.findall(r"<loc>(.*?)</loc>", s_resp.text)
                     self.sitemap_size = len(urls_in_sm)
@@ -104,7 +106,7 @@ class CompetitorCrawler:
                     continue
 
                 try:
-                    resp = await client.get(norm_curr)
+                    resp = await safe_fetch_url(client, norm_curr, timeout=12.0)
                     if resp.status_code == 200 and "text/html" in resp.headers.get("content-type", ""):
                         soup = BeautifulSoup(resp.text, "html.parser")
                         parsed = parse_html_page(resp.text, norm_curr, resp.status_code)

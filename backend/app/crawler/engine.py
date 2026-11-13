@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.db import DBManager
 from app.crawler.parser import normalize_url, is_internal_url, parse_html_page
 from app.crawler.detector import PlatformDetector
+from app.core.security import validate_safe_url, safe_fetch_url, SSRFSecurityError
 
 NON_HTML_EXTENSIONS = (
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
@@ -37,7 +38,7 @@ async def fetch_sitemap_urls(client: httpx.AsyncClient, base_url: str) -> Set[st
     try:
         robots_url = normalize_url("/robots.txt", base_url=base_url)
         if robots_url:
-            resp = await client.get(robots_url, timeout=8.0)
+            resp = await safe_fetch_url(client, robots_url, timeout=8.0)
             if resp.status_code == 200:
                 for line in resp.text.splitlines():
                     if line.lower().startswith("sitemap:"):
@@ -52,7 +53,7 @@ async def fetch_sitemap_urls(client: httpx.AsyncClient, base_url: str) -> Set[st
         if not sm_url:
             continue
         try:
-            resp = await client.get(sm_url, timeout=10.0)
+            resp = await safe_fetch_url(client, sm_url, timeout=10.0)
             if resp.status_code == 200 and ("xml" in resp.headers.get("content-type", "") or resp.text.startswith("<?xml") or "<urlset" in resp.text):
                 root = ET.fromstring(resp.content)
                 # Handle namespaces
@@ -72,6 +73,7 @@ class AsyncCrawler:
     def __init__(self, job_id: str, target_url: str, max_pages: int = 50):
         self.job_id = job_id
         self.start_url = normalize_url(target_url) or target_url
+        validate_safe_url(self.start_url)
         self.target_domain = urlparse(self.start_url).netloc
         self.max_pages = min(max_pages, settings.MAX_CRAWL_PAGES)
         
@@ -109,6 +111,20 @@ class AsyncCrawler:
             except Exception:
                 self.sitemap_urls = set()
 
+            # Seed discovered sitemap HTML pages into queue up to max_pages
+            non_html_exts = (
+                ".txt", ".xml", ".json", ".pdf", ".zip", ".gz",
+                ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg",
+                ".css", ".js", ".ico"
+            )
+            for sm_url in sorted(self.sitemap_urls):
+                norm_sm = normalize_url(sm_url, base_url=self.start_url)
+                if norm_sm and norm_sm not in self.visited:
+                    path = urlparse(norm_sm).path.lower()
+                    if not any(path.endswith(ext) for ext in non_html_exts):
+                        await self.to_visit.put(norm_sm)
+                        self.visited.add(norm_sm)
+
             # 2. Run crawl workers
             workers = [asyncio.create_task(self._worker(client)) for _ in range(settings.CRAWL_CONCURRENCY)]
             
@@ -121,21 +137,87 @@ class AsyncCrawler:
                 w.cancel()
             await asyncio.gather(*workers, return_exceptions=True)
 
+            # Probe sitemap URLs to check HTTP statuses and build sitemap comparison entries
+            sitemap_entries: List[Dict[str, Any]] = []
+            crawl_pages_db = DBManager.get_crawl_pages(self.job_id)
+            crawled_status_map = {p["url"].rstrip("/"): p.get("status_code", 200) for p in crawl_pages_db}
+
+            for sm_url in sorted(self.sitemap_urls):
+                norm_sm = sm_url.rstrip("/")
+                if norm_sm in crawled_status_map:
+                    sitemap_entries.append({
+                        "url": sm_url,
+                        "status_code": crawled_status_map[norm_sm],
+                        "in_crawl": True
+                    })
+                else:
+                    try:
+                        probe_resp = await safe_fetch_url(client, sm_url, timeout=10.0)
+                        probe_code = probe_resp.status_code
+                    except Exception:
+                        probe_code = 0  # not crawlable / network error
+                    sitemap_entries.append({
+                        "url": sm_url,
+                        "status_code": probe_code,
+                        "in_crawl": False
+                    })
+
         # 3. Save all discovered links ("Found on" references)
         if self.discovered_links:
             DBManager.save_crawl_links(self.discovered_links)
             DBManager.update_inlinks_counts(self.job_id)
 
-        # 4. Compare sitemap with crawled pages
+        # 4. Compare sitemap with crawled pages & previous job for completeness guard
         crawled_urls = self.visited
-        in_sitemap_not_crawled = len(self.sitemap_urls - crawled_urls)
-        crawled_not_in_sitemap = len(crawled_urls - self.sitemap_urls) if self.sitemap_urls else 0
+        sitemap_html_urls = {
+            u for u in self.sitemap_urls
+            if not any(urlparse(u).path.lower().endswith(ext) for ext in (
+                ".txt", ".xml", ".json", ".pdf", ".zip", ".gz",
+                ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg",
+                ".css", ".js", ".ico"
+            ))
+        }
+        in_sitemap_not_crawled = len(sitemap_html_urls - crawled_urls)
+
+        # Missing crawled pages: 200 OK, indexable, canonical self omitted from sitemap
+        sitemap_norm_set = {u.rstrip("/") for u in self.sitemap_urls}
+        crawl_pages_db = DBManager.get_crawl_pages(self.job_id)
+        missing_from_sitemap_pages = [
+            p for p in crawl_pages_db
+            if p.get("status_code") == 200
+            and p.get("indexable")
+            and (not p.get("canonical") or p.get("canonical", "").rstrip("/") == p.get("url", "").rstrip("/"))
+            and p.get("url", "").rstrip("/") not in sitemap_norm_set
+        ]
+        crawled_not_in_sitemap = len(missing_from_sitemap_pages) if self.sitemap_urls else 0
+
+        incomplete_reasons = []
+
+        # Guard 1: Sitemap URLs missing from crawl
+        if in_sitemap_not_crawled > 0:
+            incomplete_reasons.append(f"{in_sitemap_not_crawled} sitemap URL(s) were not crawled")
+
+        # Guard 2: Compare with previous job of the same domain (20% drop threshold)
+        prev_job = DBManager.get_previous_completed_job_for_domain(self.start_url, self.job_id)
+        if prev_job and prev_job.get("pages_crawled", 0) > 0:
+            prev_count = prev_job["pages_crawled"]
+            if prev_count > 0:
+                drop_pct = (prev_count - self.crawled_count) / prev_count
+                if drop_pct >= 0.20:
+                    incomplete_reasons.append(
+                        f"Pages dropped by {drop_pct*100:.1f}% compared to previous job ({self.crawled_count} vs {prev_count} pages)"
+                    )
+
+        # Guard 3: Failed fetches
+        if self.failed_fetches:
+            incomplete_reasons.append(f"{len(self.failed_fetches)} URL(s) failed after retry")
 
         platform, platform_conf = self.detector.detect()
 
         job_update: Dict = {
             "pages_crawled": self.crawled_count,
             "sitemap_found": 1 if len(self.sitemap_urls) > 0 else 0,
+            "sitemap_entries_json": json.dumps(sitemap_entries),
             "in_sitemap_not_crawled": in_sitemap_not_crawled,
             "crawled_not_in_sitemap": crawled_not_in_sitemap,
             "failed_fetches_json": json.dumps(self.failed_fetches),
@@ -143,15 +225,12 @@ class AsyncCrawler:
             "platform_confidence": platform_conf,
             "detected_platform": platform,
             "detected_platform_confidence": platform_conf,
+            "completeness_status": "possibly incomplete" if incomplete_reasons else "complete",
+            "crawl_incomplete": 1 if incomplete_reasons else 0,
+            "incomplete_reasons_json": json.dumps(incomplete_reasons),
         }
-        # Mark crawl incomplete if any URL permanently failed
-        if self.failed_fetches:
-            job_update["crawl_incomplete"] = 1
-            print(f"[Crawler] Crawl marked INCOMPLETE — {len(self.failed_fetches)} URL(s) failed after retry:")
-            for ff in self.failed_fetches:
-                print(f"  • {ff['url']} [{ff['reason']}] @ {ff['timestamp']}")
-        else:
-            job_update["crawl_incomplete"] = 0
+        if incomplete_reasons:
+            print(f"[Crawler] Crawl marked POSSIBLY INCOMPLETE: {incomplete_reasons}")
 
         DBManager.update_job(self.job_id, job_update)
 
@@ -183,7 +262,13 @@ class AsyncCrawler:
         error_reason = None
 
         try:
-            resp = await client.get(url)
+            validate_safe_url(url)
+        except SSRFSecurityError as ssrf_err:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            return 403, "", "", None, {}, elapsed_ms, f"SSRF blocked: {ssrf_err}"
+
+        try:
+            resp = await safe_fetch_url(client, url, max_redirects=5, timeout=settings.CRAWL_TIMEOUT_SECONDS)
             elapsed_ms = int((time.time() - start_time) * 1000)
             status_code = resp.status_code
             content_type = resp.headers.get("content-type", "")

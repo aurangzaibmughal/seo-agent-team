@@ -209,6 +209,7 @@ def compute_research_metrics(
         }
 
     return {
+        "has_gsc_data": len(gsc_rows) > 0,
         "query_clusters": clusters,
         "content_gaps": content_gaps,
         "cannibalization": cannibalization_items,
