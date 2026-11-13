@@ -1,12 +1,38 @@
 import httpx
 import asyncio
 import random
+import statistics
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from app.core.config import settings
 from app.core.db import DBManager
 
 PSI_API_URL = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+
+def compute_median_psi_results(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Given multiple successful PSI runs for the same URL & strategy,
+    computes the median values for performance_score, lcp_ms, cls, fcp_ms, ttfb_ms.
+    """
+    valid_runs = [r for r in runs if r.get("performance_score") is not None]
+    if not valid_runs:
+        return runs[0] if runs else {}
+    if len(valid_runs) == 1:
+        return valid_runs[0]
+
+    base = dict(valid_runs[0])
+    scores = [r["performance_score"] for r in valid_runs if r.get("performance_score") is not None]
+    lcps = [r["lcp_ms"] for r in valid_runs if r.get("lcp_ms") is not None]
+    clss = [r["cls"] for r in valid_runs if r.get("cls") is not None]
+    fcps = [r["fcp_ms"] for r in valid_runs if r.get("fcp_ms") is not None]
+    ttfbs = [r["ttfb_ms"] for r in valid_runs if r.get("ttfb_ms") is not None]
+
+    base["performance_score"] = int(statistics.median(scores)) if scores else None
+    base["lcp_ms"] = round(statistics.median(lcps), 1) if lcps else None
+    base["cls"] = round(statistics.median(clss), 3) if clss else None
+    base["fcp_ms"] = round(statistics.median(fcps), 1) if fcps else None
+    base["ttfb_ms"] = round(statistics.median(ttfbs), 1) if ttfbs else None
+    base["runs_count"] = len(valid_runs)
+    return base
 
 def check_metric_consistency(
     performance_score: Optional[int],

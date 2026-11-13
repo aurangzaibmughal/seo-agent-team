@@ -59,3 +59,44 @@ def test_score_and_metrics_consistency():
     # Score 71 with LCP 2.8s is consistent
     res2 = check_metric_consistency(performance_score=71, lcp_ms=2800.0, cls=0.08)
     assert res2["is_consistent"] is True
+
+def test_median_of_n_runs_calculation():
+    from app.services.pagespeed import compute_median_psi_results
+    runs = [
+        {"url": "https://example.com", "strategy": "mobile", "performance_score": 60, "lcp_ms": 3200.0, "cls": 0.12, "fcp_ms": 1800.0, "ttfb_ms": 500.0},
+        {"url": "https://example.com", "strategy": "mobile", "performance_score": 75, "lcp_ms": 2900.0, "cls": 0.08, "fcp_ms": 1600.0, "ttfb_ms": 450.0},
+        {"url": "https://example.com", "strategy": "mobile", "performance_score": 65, "lcp_ms": 3000.0, "cls": 0.10, "fcp_ms": 1700.0, "ttfb_ms": 480.0},
+    ]
+    median_res = compute_median_psi_results(runs)
+    assert median_res["performance_score"] == 65
+    assert median_res["lcp_ms"] == 3000.0
+    assert median_res["cls"] == 0.10
+    assert median_res["fcp_ms"] == 1700.0
+    assert median_res["ttfb_ms"] == 480.0
+    assert median_res["runs_count"] == 3
+
+def test_psi_issue_counts_derived_from_dataset_assertion():
+    psi_data = [
+        {"id": "p1", "url": "https://example.com/a", "performance_score": 45, "lcp_ms": 4500.0, "cls": 0.30},
+        {"id": "p2", "url": "https://example.com/b", "performance_score": 88, "lcp_ms": 2800.0, "cls": 0.15},
+        {"id": "p3", "url": "https://example.com/c", "performance_score": 95, "lcp_ms": 1200.0, "cls": 0.02},
+    ]
+    issues = detect_issues_from_data([], [], psi_data)
+    issue_types = [i["type"] for i in issues]
+
+    expected_low_score = sum(1 for p in psi_data if p.get("performance_score") is not None and p["performance_score"] < 50)
+    expected_slow_lcp = sum(1 for p in psi_data if p.get("lcp_ms") is not None and p["lcp_ms"] > 4000)
+    expected_poor_cls = sum(1 for p in psi_data if p.get("cls") is not None and p["cls"] > 0.25)
+
+    assert issue_types.count("low_performance_score") == expected_low_score
+    assert issue_types.count("slow_lcp") == expected_slow_lcp
+    assert issue_types.count("poor_cls") == expected_poor_cls
+
+def test_psi_disclosure_and_crux_separation():
+    from app.services.reporter import ReportExporter
+    import inspect
+    src = inspect.getsource(ReportExporter.generate_pdf)
+    assert "tested" in src.lower() and "crawled pages" in src.lower()
+    assert "crux" in src.lower() or "chrome ux report" in src.lower()
+    assert "pagespeed unavailable:" in src.lower()
+    assert "measured at" in src.lower()
