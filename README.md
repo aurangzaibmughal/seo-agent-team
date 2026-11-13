@@ -129,3 +129,15 @@ Per security policy, this application runs entirely on `localhost`:
 ```
 
 For detailed deployment parameters, containerization, and production secret requirements, see [DEPLOY.md](docs/DEPLOY.md).
+
+---
+
+## 7. Accuracy & Hardening Engine (Audit Gate)
+
+The platform includes rigorous accuracy gates and generic platform adapters:
+- **Zero Hallucination Verifier:** Every finding, rewrite, and strategy task requires empirical evidence before inclusion in deliverables.
+- **Generic CMS Architecture:** Automatic framework detection with tailored adapters for **WordPress / Elementor**, **Next.js**, **Shopify**, and standard HTML sites.
+- **Exact Core Web Vitals:** Strict 3-band CWV standards (Good, Needs Improvement, Poor) with Lighthouse lab-data validation.
+- **Deterministic 4-Week Strategy:** Fallback plan builder that guarantees a prioritized, phased 30-day roadmap even when external APIs (GSC, SERP) are unlinked.
+- **Report QA Gate:** Automated pre-export linter that checks metric plausibility, URL reproduction evidence, and contiguous report layout.
+
