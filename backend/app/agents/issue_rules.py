@@ -334,7 +334,7 @@ def detect_issues_from_data(
                 "type": "duplicate_title",
                 "urls": [p["url"] for p in plist],
                 "group_key": t_text,
-                "evidence": [{"table": "crawl_pages", "id": p["id"], "field": "title", "value": p.get("title")} for p in plist],
+                "evidence": [{"table": "crawl_pages", "id": p.get("id"), "field": "title", "value": p.get("title")} for p in plist],
             })
 
     # Duplicate Meta Descriptions (A-05: Grouped with exact shared text)
@@ -344,7 +344,7 @@ def detect_issues_from_data(
                 "type": "duplicate_meta_description",
                 "urls": [p["url"] for p in plist],
                 "group_key": m_text,
-                "evidence": [{"table": "crawl_pages", "id": p["id"], "field": "meta_desc", "value": p.get("meta_desc")} for p in plist],
+                "evidence": [{"table": "crawl_pages", "id": p.get("id"), "field": "meta_desc", "value": p.get("meta_desc")} for p in plist],
             })
 
     # 2. PageSpeed Insights Rules

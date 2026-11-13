@@ -219,6 +219,34 @@ class ReportExporter:
                 ('PADDING', (0, 0), (-1, -1), 3),
             ]))
             story.append(t_issues)
+
+            # Detailed Issues Evidence (A-06: Every issue lists affected URLs)
+            story.append(Spacer(1, 8))
+            story.append(Paragraph("<b>Issue Evidence & Affected URLs (Full Reproduction Trail)</b>", h2_style))
+            evidence_rows = [["ID", "Type", "Affected URL", "Found / Required Action"]]
+            for issue in verified_issues:
+                i_id = issue.get("id", "")
+                i_type = issue.get("type", "")
+                hint = html.escape(str(issue.get("fix_hint", "")[:120]))
+                for u in issue.get("urls", []):
+                    evidence_rows.append([
+                        i_id,
+                        i_type,
+                        Paragraph(f"<font size=6.5>{html.escape(u)}</font>", body_style),
+                        Paragraph(f"<font size=6.5>{hint}</font>", body_style)
+                    ])
+            if len(evidence_rows) > 1:
+                t_ev = Table(evidence_rows, colWidths=[40, 110, 240, 150])
+                t_ev.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 6.5),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                    ('PADDING', (0, 0), (-1, -1), 2),
+                ]))
+                story.append(t_ev)
         else:
             story.append(Paragraph("No technical issues identified.", body_style))
 
@@ -588,6 +616,16 @@ class ReportExporter:
                     f"Affected: {len(i.get('urls', []))}",
                     f"{i.get('impact')} | Fix: {i.get('fix_hint')}"
                 ])
+                # A-06: Every issue lists affected URLs with evidence
+                for u in i.get("urls", []):
+                    writer.writerow([
+                        "Technical Issue URL Evidence",
+                        i.get("id"),
+                        i.get("type"),
+                        u,
+                        f"Severity: {i.get('severity')}",
+                        f"Fix: {i.get('fix_hint')}"
+                    ])
 
             # Sitemap Comparison Detailed Rows
             for i in verified_issues:
@@ -811,6 +849,19 @@ class ReportExporter:
                 i.get("impact"),
                 i.get("fix_hint")
             ])
+
+        # Sheet 2b: Technical Issue Evidence (Per URL) (A-06)
+        ws_iss_ev = wb.create_sheet(title="Issue Evidence (Per URL)")
+        ws_iss_ev.append(["Issue ID", "Type", "Severity", "Affected URL", "Fix Hint"])
+        for i in verified_issues:
+            for u in i.get("urls", []):
+                ws_iss_ev.append([
+                    i.get("id"),
+                    i.get("type"),
+                    i.get("severity", "").upper(),
+                    u,
+                    i.get("fix_hint")
+                ])
 
         # Sheet: Sitemap Comparison
         ws_sm = wb.create_sheet(title="Sitemap Comparison")
