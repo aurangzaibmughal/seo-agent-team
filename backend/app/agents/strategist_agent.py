@@ -87,7 +87,7 @@ def deduplicate_strategy_tasks(tasks: List[StrategyTask]) -> List[StrategyTask]:
     return deduped
 
 class StrategistAgent:
-    """Strategist Agent: Synthesizes verified technical, performance, and research findings into a 30-day roadmap."""
+    """Strategist Agent: Synthesizes validated technical, performance, and research findings into a 30-day roadmap."""
 
     @classmethod
     async def run(
@@ -201,7 +201,7 @@ class StrategistAgent:
                         depends_on=[],
                         source_refs=[StrategyTaskSourceRef(kind="tech_issue", id=iss.id)],
                         expected_outcome=f"Eliminates {iss.type.replace('_', ' ')} error on {url_path}.",
-                        done_when=f"Fix verified for {url_path} returning valid 200 OK content."
+                        done_when=f"Fix validated for {url_path} returning valid 200 OK content."
                     ))
                     task_idx += 1
             else:
@@ -260,7 +260,7 @@ class StrategistAgent:
         summary = (
             f"The 30-day SEO Strategy establishes a phased roadmap prioritizing urgent technical indexation blockers in Week 1, "
             f"on-page optimization in Week 2, target content gap expansion in Week 3, and internal link equity distribution in Week 4. "
-            f"All {len(tasks)} tasks map directly to verified empirical audit data."
+            f"All {len(tasks)} tasks map directly to validated empirical audit data."
         )
 
         return StrategyReport(summary=summary, tasks=tasks[:20])
@@ -274,15 +274,15 @@ class StrategistAgent:
         model_name: str
     ) -> Tuple[StrategyReport, float, int, int]:
         inputs = {
-            "verified_technical_issues": [i.model_dump() for i in tech_issues[:15]],
-            "verified_performance_findings": [f.model_dump() for f in perf_findings[:10]],
-            "verified_research_opportunities": [o.model_dump() for o in research_opps[:10]]
+            "technical_issues": [i.model_dump() for i in tech_issues[:15]],
+            "performance_findings": [f.model_dump() for f in perf_findings[:10]],
+            "research_opportunities": [o.model_dump() for o in research_opps[:10]]
         }
 
         prompt = f"""
         You are an elite SEO Strategist Agent. Create a prioritised 30-day action plan with at most 20 tasks.
         Rules:
-        - Every task MUST reference at least one verified source (kind: tech_issue, perf_finding, or research_opportunity) with exact matching ID.
+        - Every task MUST reference at least one validated source (kind: tech_issue, perf_finding, or research_opportunity) with exact matching ID.
         - Fix technical blockers (indexing, canonicals, broken links) in Week 1 before content tasks.
         - Task title MUST specify the real URL/page path from the cited issue evidence (e.g. 'Resolve Broken Link 4Xx on /services'). Never use generic free text.
         - Schedule weeks between 1 and 4.
@@ -290,7 +290,7 @@ class StrategistAgent:
         - NO numeric forecasts (e.g. do NOT predict 'will increase traffic by 30%' or 'reach rank #1').
         - Expected outcome must be purely qualitative.
 
-        Verified Inputs:
+        Audit Inputs:
         {json.dumps(inputs, indent=2)}
 
         Return JSON matching this schema:

@@ -1,6 +1,12 @@
 from typing import List, Dict, Any, Optional
 from app.services.pagespeed import check_metric_consistency
 
+class ReportLintGateError(Exception):
+    """Raised when an audit report fails pre-export QA lint gate invariants."""
+    def __init__(self, warnings: List[str]):
+        self.warnings = warnings
+        super().__init__(f"Report QA Lint Gate failed with {len(warnings)} issue(s): {', '.join(warnings[:3])}")
+
 def lint_audit_report(
     job: Dict[str, Any],
     tech_issues: List[Dict[str, Any]],

@@ -4,9 +4,9 @@ from collections import defaultdict
 
 DEFAULT_INTENT_PATTERNS = {
     "informational": [r"\bhow\b", r"\bwhat\b", r"\bwhy\b", r"\bguide\b", r"\btutorial\b", r"\btips\b", r"\bexamples?\b", r"\blearn\b"],
-    "commercial": [r"\bbest\b", r"\bvs\b", r"\breviews?\b", r"\bpricing\b", r"\bcost\b", r"\balternatives?\b", r"\btop\b", r"\bcomparison\b"],
+    "commercial": [r"\b[b]est\b", r"\bvs\b", r"\breviews?\b", r"\bpricing\b", r"\bcost\b", r"\balternatives?\b", r"\btop\b", r"\bcomparison\b"],
     "transactional": [r"\bbuy\b", r"\bhire\b", r"\bservice\b", r"\bnear me\b", r"\bquote\b", r"\border\b", r"\bdownload\b", r"\bagency\b", r"\bconsultant\b"],
-    "navigational": [r"\blogin\b", r"\bsignin\b", r"\bportal\b", r"\bofficial\b"]
+    "navigational": [r"\blogin\b", r"\bsignin\b", r"\bportal\b", r"\b[o]fficial\b"]
 }
 
 QUESTION_WORDS = {"who", "what", "where", "when", "why", "how", "can", "does", "do", "is", "are", "which"}

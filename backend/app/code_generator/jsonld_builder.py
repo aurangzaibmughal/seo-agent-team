@@ -263,7 +263,7 @@ class JsonLdBuilder:
                 "name": q_text,
                 "acceptedAnswer": {
                     "@type": "Answer",
-                    "text": f"Information regarding {q_text.rstrip('?')}. Consult official documentation for details."
+                    "text": f"Information regarding {q_text.rstrip('?')}. Details are available on the page."
                 }
             })
 

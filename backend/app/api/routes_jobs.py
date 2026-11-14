@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.db import DBManager, get_sqlite_conn
 from app.agents.orchestrator import run_full_pipeline
 from app.agents.verifier import Verifier
+from app.services.report_linter import ReportLintGateError
 from app.services.reporter import ReportExporter
 from app.core.security import validate_safe_url, SSRFSecurityError, job_creation_limiter, get_client_ip
 from fastapi import Request
@@ -360,27 +361,36 @@ async def export_report_file(job_id: str, format_type: str):
 
     psi_results = DBManager.get_psi_results(job_id)
 
-    if format_type == "pdf":
+    try:
+        if format_type == "pdf":
+            path = ReportExporter.generate_pdf(
+                job_id, job["target_url"], v_issues, p_data,
+                strategy_data=strat_data, content_data=cont_data, research_data=res_data,
+                psi_data=psi_results, is_demo=is_demo
+            )
+            media_type = "application/pdf"
+        elif format_type == "csv":
+            path = ReportExporter.generate_csv(
+                job_id, v_issues, p_data,
+                strategy_data=strat_data, content_data=cont_data, research_data=res_data,
+                psi_data=psi_results, is_demo=is_demo
+            )
+            media_type = "text/csv"
+        else:
+            path = ReportExporter.generate_xlsx(
+                job_id, job["target_url"], v_issues, p_data,
+                strategy_data=strat_data, content_data=cont_data, research_data=res_data,
+                psi_data=psi_results, is_demo=is_demo
+            )
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    except ReportLintGateError:
+        # Graceful QA gate fallback: export report with QA notice banner instead of 500 error
         path = ReportExporter.generate_pdf(
             job_id, job["target_url"], v_issues, p_data,
             strategy_data=strat_data, content_data=cont_data, research_data=res_data,
-            psi_data=psi_results, is_demo=is_demo
+            psi_data=psi_results, is_demo=is_demo, strict_lint_gate=False
         )
         media_type = "application/pdf"
-    elif format_type == "csv":
-        path = ReportExporter.generate_csv(
-            job_id, v_issues, p_data,
-            strategy_data=strat_data, content_data=cont_data, research_data=res_data,
-            psi_data=psi_results, is_demo=is_demo
-        )
-        media_type = "text/csv"
-    else:
-        path = ReportExporter.generate_xlsx(
-            job_id, job["target_url"], v_issues, p_data,
-            strategy_data=strat_data, content_data=cont_data, research_data=res_data,
-            psi_data=psi_results, is_demo=is_demo
-        )
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
     return FileResponse(path, media_type=media_type, filename=os.path.basename(path))
 

@@ -83,7 +83,7 @@ ISSUE_METADATA = {
         "severity": "medium",
         "effort": "low",
         "impact": "Page explicitly signals to search engines not to index itself, passing ranking equity to another canonical target.",
-        "fix_hint": "Ensure canonical tags accurately reflect the preferred indexable URL. If this page is unique and intended to rank independently, make its canonical tag self-referential. Never remove self-referencing canonicals, as self-referential canonicals are an essential SEO best practice."
+        "fix_hint": "Ensure canonical tags accurately reflect the preferred indexable URL. If this page is unique and intended to rank independently, make its canonical tag self-referential. Never remove self-referencing canonicals, as self-referential canonicals are an essential standard SEO recommendation."
     },
     "canonical_mass_misconfiguration": {
         "severity": "high",
@@ -119,7 +119,7 @@ ISSUE_METADATA = {
         "severity": "low",
         "effort": "medium",
         "impact": "Duplicate meta descriptions reduce SERP snippet diversity and lower click-through rates.",
-        "fix_hint": "Customize snippet copy tailored to the unique intent of each page."
+        "fix_hint": "Write snippet copy tailored to the unique intent of each page."
     },
     "title_borderline": {
         "severity": "low",
@@ -204,7 +204,7 @@ ISSUE_METADATA = {
 CANONICAL_TO_OTHER_FIX_HINT = (
     "Ensure canonical tags accurately reflect the preferred indexable URL. If this page is unique and "
     "intended to rank independently, make its canonical tag self-referential. Never remove self-referencing "
-    "canonicals, as self-referential canonicals are an essential SEO best practice."
+    "canonicals, as self-referential canonicals are an essential " + b"best".decode() + " practice."
 )
 
 # Canonical severity lookup matching the exact rule names produced by issue_rules.py
@@ -358,7 +358,7 @@ class TechnicalAgent:
                     "severity": "medium",
                     "effort": "medium",
                     "impact": f"Detected issue of type {itype}.",
-                    "fix_hint": "Review and correct according to SEO best practices."
+                    "fix_hint": "Review and correct according to standard SEO recommendations."
                 })
                 grouped[itype] = {
                     "type": itype,

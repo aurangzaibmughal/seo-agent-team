@@ -23,7 +23,7 @@ def test_asana_export_preview_and_csv_generation():
     with get_sqlite_conn() as conn:
         conn.execute(
             "INSERT INTO jobs (id, target_url, status, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/", "completed")
+            (job_id, "https://demo-site.example.com/", "completed")
         )
 
     strategy_plan = {
@@ -37,7 +37,7 @@ def test_asana_export_preview_and_csv_generation():
                 "priority_score": 5.0,
                 "done_when": "Zero 404 links returning in crawl audit.",
                 "source_refs": [{"id": "T-001", "type": "issue"}],
-                "affected_urls": ["https://webspire-agency.vercel.app/old-page"]
+                "affected_urls": ["https://demo-site.example.com/old-page"]
             },
             {
                 "id": "S-002",
@@ -48,7 +48,7 @@ def test_asana_export_preview_and_csv_generation():
                 "priority_score": 3.0,
                 "done_when": "All meta descriptions between 70 and 155 chars.",
                 "source_refs": [{"id": "T-002", "type": "issue"}],
-                "affected_urls": ["https://webspire-agency.vercel.app/services"],
+                "affected_urls": ["https://demo-site.example.com/services"],
                 "dependencies": ["S-001"]
             }
         ],
@@ -69,7 +69,7 @@ def test_asana_export_preview_and_csv_generation():
     assert t1["section"] == "Week 1"
     assert t1["due_on"] == "2026-04-08" # 2026-04-01 + 7 days
     assert "Zero 404 links returning in crawl audit." in t1["notes"]
-    assert "https://webspire-agency.vercel.app/old-page" in t1["notes"]
+    assert "https://demo-site.example.com/old-page" in t1["notes"]
 
     # Week 2 task
     t2 = tasks[1]
@@ -111,7 +111,7 @@ def test_asana_preview_approved_tasks_only_filter():
     with get_sqlite_conn() as conn:
         conn.execute(
             "INSERT INTO jobs (id, target_url, status, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/", "completed")
+            (job_id, "https://demo-site.example.com/", "completed")
         )
 
     # 10 tasks in strategy plan
@@ -161,7 +161,7 @@ def test_asana_export_mocked_sync_and_idempotency():
     with get_sqlite_conn() as conn:
         conn.execute(
             "INSERT INTO jobs (id, target_url, status, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/", "completed")
+            (job_id, "https://demo-site.example.com/", "completed")
         )
 
     strategy_plan = {
@@ -253,7 +253,7 @@ def test_cost_caps_mid_run_crossing_falls_back():
     with get_sqlite_conn() as conn:
         conn.execute(
             "INSERT INTO jobs (id, target_url, status, cost_usd, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/", "running", 0.0)
+            (job_id, "https://demo-site.example.com/", "running", 0.0)
         )
 
     with patch.object(settings, "MAX_JOB_COST_USD", 0.10), patch.object(settings, "DAILY_COST_CAP_USD", 10000.0):
@@ -289,11 +289,11 @@ def test_job_delete_with_confirm_flag():
     with get_sqlite_conn() as conn:
         conn.execute(
             "INSERT INTO jobs (id, target_url, status, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/", "completed")
+            (job_id, "https://demo-site.example.com/", "completed")
         )
         conn.execute(
             "INSERT INTO crawl_pages (job_id, url, status_code, created_at) VALUES (?, ?, ?, datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/test", 200)
+            (job_id, "https://demo-site.example.com/test", 200)
         )
 
     # 1. DELETE without ?confirm=true must return 400 Bad Request
@@ -364,7 +364,7 @@ def test_orchestrator_cancellation_and_resume():
     with get_sqlite_conn() as conn:
         conn.execute(
             "INSERT INTO jobs (id, target_url, status, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/", "running")
+            (job_id, "https://demo-site.example.com/", "running")
         )
 
     # Cancel job

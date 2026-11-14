@@ -18,27 +18,27 @@ from app.models.agent_schemas import (
 )
 
 def test_brand_repeated_in_title_detection_and_escalation():
-    brand = "WebSpire"
+    brand = "AcmeCorp"
     crawl_pages = [
         {
-            "url": "https://webspire-agency.vercel.app/",
-            "title": "WebSpire — Digital Agency & Web Solutions",
+            "url": "https://demo-site.example.com/",
+            "title": "AcmeCorp — Digital Agency & Web Solutions",
             "meta_desc": "Digital agency",
             "indexable": True,
             "status_code": 200,
             "links_out": 5
         },
         {
-            "url": "https://webspire-agency.vercel.app/services",
-            "title": "Our Services | WebSpire — Digital Agency & Web Solutions | WebSpire",
+            "url": "https://demo-site.example.com/services",
+            "title": "Our Services | AcmeCorp — Digital Agency & Web Solutions | AcmeCorp",
             "meta_desc": "Services description",
             "indexable": True,
             "status_code": 200,
             "links_out": 5
         },
         {
-            "url": "https://webspire-agency.vercel.app/portfolio",
-            "title": "Portfolio | WebSpire — Digital Agency & Web Solutions | WebSpire",
+            "url": "https://demo-site.example.com/portfolio",
+            "title": "Portfolio | AcmeCorp — Digital Agency & Web Solutions | AcmeCorp",
             "meta_desc": "Portfolio description",
             "indexable": True,
             "status_code": 200,
@@ -49,8 +49,8 @@ def test_brand_repeated_in_title_detection_and_escalation():
     brand_rep_issues = [iss for iss in detected if iss.get("type") == "brand_repeated_in_title"]
     assert len(brand_rep_issues) == 2
     affected_urls = [u for iss in brand_rep_issues for u in iss["urls"]]
-    assert "https://webspire-agency.vercel.app/services" in affected_urls
-    assert "https://webspire-agency.vercel.app/portfolio" in affected_urls
+    assert "https://demo-site.example.com/services" in affected_urls
+    assert "https://demo-site.example.com/portfolio" in affected_urls
 
     # Ratio is 2/3 = 66.7% (>= 30%), so severity escalates from medium to high
     sev = get_deterministic_severity("brand_repeated_in_title", len(affected_urls), len(crawl_pages))
@@ -226,9 +226,9 @@ async def test_code_generator_short_page_titles_and_next_config():
     - Emits snippet files (*.metadata.snippet.tsx) that do not overwrite app files.
     """
     crawl_pages = [
-        {"url": "https://webspire-agency.vercel.app/", "status_code": 200, "indexable": True, "title": "WebSpire — Ideas to Impact", "meta_desc": "Agency", "h1": "Web Agency"},
-        {"url": "https://webspire-agency.vercel.app/services", "status_code": 200, "indexable": True, "title": "Our Services | WebSpire — Digital Agency | WebSpire", "meta_desc": "Services", "h1": "Our Services"},
-        {"url": "https://webspire-agency.vercel.app/portfolio", "status_code": 200, "indexable": True, "title": "WebSpire — Ideas to Impact | Pakistan's Trusted Agency", "meta_desc": "Portfolio", "h1": "Portfolio"}
+        {"url": "https://demo-site.example.com/", "status_code": 200, "indexable": True, "title": "AcmeCorp — Ideas to Impact", "meta_desc": "Agency", "h1": "Web Agency"},
+        {"url": "https://demo-site.example.com/services", "status_code": 200, "indexable": True, "title": "Our Services | AcmeCorp — Digital Agency | AcmeCorp", "meta_desc": "Services", "h1": "Our Services"},
+        {"url": "https://demo-site.example.com/portfolio", "status_code": 200, "indexable": True, "title": "AcmeCorp — Ideas to Impact | Pakistan's Trusted Agency", "meta_desc": "Portfolio", "h1": "Portfolio"}
     ]
     verified_issues = [
         TechnicalIssue(
@@ -237,7 +237,7 @@ async def test_code_generator_short_page_titles_and_next_config():
             severity="high",
             impact="Brand repeated",
             effort="low",
-            urls=["https://webspire-agency.vercel.app/services"],
+            urls=["https://demo-site.example.com/services"],
             evidence=[],
             fix_hint="Shorten title",
             confidence=1.0
@@ -248,7 +248,7 @@ async def test_code_generator_short_page_titles_and_next_config():
             severity="medium",
             impact="Canonical to other",
             effort="low",
-            urls=["https://webspire-agency.vercel.app/portfolio"],
+            urls=["https://demo-site.example.com/portfolio"],
             evidence=[],
             fix_hint="301 redirect",
             confidence=1.0
@@ -276,7 +276,7 @@ async def test_code_generator_short_page_titles_and_next_config():
     assert "app/services/page.metadata.snippet.tsx" in art_map
     serv_content = art_map["app/services/page.metadata.snippet.tsx"].content
     assert "title: 'Our Services'" in serv_content
-    assert "WebSpire" not in serv_content.split("title:")[1].split(",")[0]
+    assert "AcmeCorp" not in serv_content.split("title:")[1].split(",")[0]
     assert "MERGE into your existing" in serv_content
     assert "export default function Page" not in serv_content
 
@@ -284,7 +284,7 @@ async def test_code_generator_short_page_titles_and_next_config():
     assert "app/portfolio/page.metadata.snippet.tsx" in art_map
     port_content = art_map["app/portfolio/page.metadata.snippet.tsx"].content
     assert "title: 'Portfolio'" in port_content
-    assert "WebSpire" not in port_content.split("title:")[1].split(",")[0]
+    assert "AcmeCorp" not in port_content.split("title:")[1].split(",")[0]
     assert "MERGE into your existing" in port_content
     assert "export default function Page" not in port_content
 
@@ -313,9 +313,9 @@ async def test_portfolio_meta_uniqueness_and_similarity():
     import difflib
 
     crawl_pages = [
-        {"url": "https://webspire-agency.vercel.app/", "status_code": 200, "indexable": True, "title": "WebSpire — Ideas to Impact", "meta_desc": "WebSpire is a full-service web engineering agency providing custom application development.", "h1": "Web Agency"},
-        {"url": "https://webspire-agency.vercel.app/services", "status_code": 200, "indexable": True, "title": "Services", "meta_desc": "Full cycle web development, UI/UX architecture, cloud solutions, and organic search optimization.", "h1": "Our Services"},
-        {"url": "https://webspire-agency.vercel.app/portfolio", "status_code": 200, "indexable": True, "title": "Portfolio", "meta_desc": "Our Creative Work", "h1": "Our Creative Work"}
+        {"url": "https://demo-site.example.com/", "status_code": 200, "indexable": True, "title": "AcmeCorp — Ideas to Impact", "meta_desc": "AcmeCorp is a full-service web engineering agency providing custom application development.", "h1": "Web Agency"},
+        {"url": "https://demo-site.example.com/services", "status_code": 200, "indexable": True, "title": "Services", "meta_desc": "Full cycle web development, UI/UX architecture, cloud solutions, and organic search optimization.", "h1": "Our Services"},
+        {"url": "https://demo-site.example.com/portfolio", "status_code": 200, "indexable": True, "title": "Portfolio", "meta_desc": "Our Creative Work", "h1": "Our Creative Work"}
     ]
 
     bundle, mode, cost, err, model = await CodeGeneratorAgent.run(
@@ -357,9 +357,9 @@ async def test_opengraph_type_and_real_characters():
     Use real characters instead of \\u escapes.
     """
     crawl_pages = [
-        {"url": "https://webspire-agency.vercel.app/", "status_code": 200, "indexable": True, "title": "WebSpire — Ideas & Innovation", "meta_desc": "Digital agency & web design.", "h1": "Home"},
-        {"url": "https://webspire-agency.vercel.app/services", "status_code": 200, "indexable": True, "title": "Services — Custom Development", "meta_desc": "Next.js & React engineering.", "h1": "Services"},
-        {"url": "https://webspire-agency.vercel.app/blog/seo-guide", "status_code": 200, "indexable": True, "title": "Guide to Modern SEO", "meta_desc": "SEO insights & tips.", "h1": "SEO Guide"}
+        {"url": "https://demo-site.example.com/", "status_code": 200, "indexable": True, "title": "AcmeCorp — Ideas & Innovation", "meta_desc": "Digital agency & web design.", "h1": "Home"},
+        {"url": "https://demo-site.example.com/services", "status_code": 200, "indexable": True, "title": "Services — Custom Development", "meta_desc": "Next.js & React engineering.", "h1": "Services"},
+        {"url": "https://demo-site.example.com/blog/seo-guide", "status_code": 200, "indexable": True, "title": "Guide to Modern SEO", "meta_desc": "SEO insights & tips.", "h1": "SEO Guide"}
     ]
 
     bundle, mode, cost, err, model = await CodeGeneratorAgent.run(
@@ -395,7 +395,7 @@ async def test_opengraph_type_and_real_characters():
 async def test_root_layout_metadata_title_and_og():
     """Batch A.2 Item 5: Root layout metadata: title.default <= 60 chars, template '%s | Brand', OG title matching."""
     crawl_pages = [
-        {"url": "https://webspire-agency.vercel.app/", "status_code": 200, "indexable": True, "title": "WebSpire — Ideas to Impact | Pakistan's Leading Full-Stack Web Development Agency", "meta_desc": "Description", "h1": "Home"}
+        {"url": "https://demo-site.example.com/", "status_code": 200, "indexable": True, "title": "AcmeCorp — Ideas to Impact | Pakistan's Leading Full-Stack Web Development Agency", "meta_desc": "Description", "h1": "Home"}
     ]
 
     bundle, mode, cost, err, model = await CodeGeneratorAgent.run(
@@ -424,7 +424,7 @@ async def test_root_layout_metadata_title_and_og():
     assert og_match is not None
     og_title = og_match.group(1)
     assert og_title == def_title
-    assert "template: '%s | WebSpire'" in root_art.content
+    assert "template: '%s | AcmeCorp'" in root_art.content
 
 @pytest.mark.asyncio
 async def test_dynamic_routes_and_metadata_csv():
@@ -432,9 +432,9 @@ async def test_dynamic_routes_and_metadata_csv():
     and per-post titles/metas in metadata_table.csv.
     """
     crawl_pages = [
-        {"url": "https://webspire-agency.vercel.app/", "status_code": 200, "indexable": True, "title": "WebSpire", "meta_desc": "Agency", "h1": "Home"},
-        {"url": "https://webspire-agency.vercel.app/blog/nextjs-15-tips", "status_code": 200, "indexable": True, "title": "Next.js 15 Tips | WebSpire", "meta_desc": "Learn top Next.js tips.", "h1": "Next.js 15 Tips"},
-        {"url": "https://webspire-agency.vercel.app/blog/seo-best-practices", "status_code": 200, "indexable": True, "title": "SEO Best Practices | WebSpire", "meta_desc": "SEO strategies for developers.", "h1": "SEO Best Practices"}
+        {"url": "https://demo-site.example.com/", "status_code": 200, "indexable": True, "title": "AcmeCorp", "meta_desc": "Agency", "h1": "Home"},
+        {"url": "https://demo-site.example.com/blog/nextjs-15-tips", "status_code": 200, "indexable": True, "title": "Next.js 15 Tips | AcmeCorp", "meta_desc": "Learn top Next.js tips.", "h1": "Next.js 15 Tips"},
+        {"url": "https://demo-site.example.com/blog/seo-best-practices", "status_code": 200, "indexable": True, "title": "SEO Best Practices | AcmeCorp", "meta_desc": "SEO strategies for developers.", "h1": "SEO Best Practices"}
     ]
 
     bundle, mode, cost, err, model = await CodeGeneratorAgent.run(
@@ -471,17 +471,17 @@ def test_llms_txt_clean_standard_format():
     nothing before H1, descriptions cut at word boundaries.
     """
     content = CodeTemplateEngine.render_llms_txt(
-        site_name="WebSpire",
-        site_summary="WebSpire is a digital agency providing custom software engineering and growth solutions.",
-        base_url="https://webspire-agency.vercel.app",
+        site_name="AcmeCorp",
+        site_summary="AcmeCorp is a digital agency providing custom software engineering and growth solutions.",
+        base_url="https://demo-site.example.com",
         curated_links=[
-            {"title": "Our Services", "url": "https://webspire-agency.vercel.app/services", "description": "Custom Next.js engineering and design architecture."},
-            {"title": "Portfolio", "url": "https://webspire-agency.vercel.app/portfolio", "description": "Showcase of high-converting web applications and digital platforms."}
+            {"title": "Our Services", "url": "https://demo-site.example.com/services", "description": "Custom Next.js engineering and design architecture."},
+            {"title": "Portfolio", "url": "https://demo-site.example.com/portfolio", "description": "Showcase of high-converting web applications and digital platforms."}
         ]
     )
 
     # First character must be '#'
-    assert content.startswith("# WebSpire\n")
+    assert content.startswith("# AcmeCorp\n")
     # No comment header at top of file
     assert not any(l.strip().startswith(("//", "/*")) for l in content.splitlines())
     assert "# Generated by" not in content
@@ -489,8 +489,8 @@ def test_llms_txt_clean_standard_format():
     # Structure
     assert "\n> " in content
     assert "\n## Key Resources\n" in content
-    assert "- [Our Services](https://webspire-agency.vercel.app/services):" in content
-    assert "- [Portfolio](https://webspire-agency.vercel.app/portfolio):" in content
+    assert "- [Our Services](https://demo-site.example.com/services):" in content
+    assert "- [Portfolio](https://demo-site.example.com/portfolio):" in content
     assert "\n## Contact & Organization\n" in content
 
 def test_readme_and_review_gating():
@@ -503,7 +503,7 @@ def test_readme_and_review_gating():
     with get_sqlite_conn() as conn:
         conn.execute(
             "INSERT INTO jobs (id, target_url, status, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app", "completed")
+            (job_id, "https://demo-site.example.com", "completed")
         )
 
     artifacts = [
@@ -564,7 +564,7 @@ def test_readme_and_review_gating():
     # 1. Gated ZIP (default: include_unreviewed=False) -> exactly 3 approved code files
     zip_gated_bytes = CodePackager.generate_zip(
         job_id=job_id,
-        domain="webspire-agency.vercel.app",
+        domain="demo-site.example.com",
         platform="nextjs",
         artifacts=artifacts,
         validation_results=[],
@@ -586,7 +586,7 @@ def test_readme_and_review_gating():
     # 2. Ungated ZIP (include_unreviewed=True) -> all 4 code files, 4th marked with [UNREVIEWED]
     zip_ungated_bytes = CodePackager.generate_zip(
         job_id=job_id,
-        domain="webspire-agency.vercel.app",
+        domain="demo-site.example.com",
         platform="nextjs",
         artifacts=artifacts,
         validation_results=[],
@@ -678,15 +678,15 @@ def test_nextjs_sitemap_ts_and_readme_recommendation():
     from app.code_generator.packager import CodePackager
 
     sitemap_items = [
-        {"url": "https://webspire-agency.vercel.app/", "lastmod": "2026-03-01", "priority": "1.0"},
-        {"url": "https://webspire-agency.vercel.app/services", "lastmod": "2026-03-01", "priority": "0.8"},
-        {"url": "https://webspire-agency.vercel.app/portfolio", "lastmod": "2026-03-01", "priority": "0.8"},
+        {"url": "https://demo-site.example.com/", "lastmod": "2026-03-01", "priority": "1.0"},
+        {"url": "https://demo-site.example.com/services", "lastmod": "2026-03-01", "priority": "0.8"},
+        {"url": "https://demo-site.example.com/portfolio", "lastmod": "2026-03-01", "priority": "0.8"},
     ]
 
     rendered_ts = CodeTemplateEngine.render_nextjs_sitemap_ts(sitemap_items)
     assert "export default function sitemap(): MetadataRoute.Sitemap" in rendered_ts
-    assert "https://webspire-agency.vercel.app/" in rendered_ts
-    assert "https://webspire-agency.vercel.app/services" in rendered_ts
+    assert "https://demo-site.example.com/" in rendered_ts
+    assert "https://demo-site.example.com/services" in rendered_ts
     assert "generate this sitemap directly from your site's own data source" in rendered_ts.lower()
 
     instructions = CodePackager._get_platform_specific_instructions("nextjs")
@@ -697,14 +697,14 @@ def test_nextjs_sitemap_ts_and_readme_recommendation():
 def test_snippet_title_and_meta_length_constraints():
     """Verify that root layout and page snippets enforce title <= 60 and meta <= 155."""
     # Root layout snippet
-    long_home_title = "WebSpire - Premier Full-Stack Digital Agency in Pakistan for Web and Mobile Development"
+    long_home_title = "AcmeCorp - Premier Full-Stack Digital Agency in Pakistan for Web and Mobile Development"
     long_home_desc = "We craft exceptional high-performance digital products, scalable web apps, and bespoke branding for global enterprises and ambitious startups across the world."
 
     root_snippet = CodeTemplateEngine.render_nextjs_root_layout(
-        base_url="https://webspire-agency.vercel.app",
+        base_url="https://demo-site.example.com",
         default_title=long_home_title,
         default_description=long_home_desc,
-        brand_name="WebSpire",
+        brand_name="AcmeCorp",
         is_demo=False
     )
     # Check title.default length
@@ -712,7 +712,7 @@ def test_snippet_title_and_meta_length_constraints():
     assert match_title is not None
     title_default = match_title.group(1)
     assert len(title_default) <= 60
-    assert "WebSpire" in title_default
+    assert "AcmeCorp" in title_default
     assert "Digital" in title_default or "Agency" in title_default
 
     # Check description length
@@ -723,9 +723,9 @@ def test_snippet_title_and_meta_length_constraints():
 
     # Page metadata snippet
     page_snippet = CodeTemplateEngine.render_nextjs_page_metadata(
-        title="Comprehensive Enterprise Software Development and Cloud Architecture Services | WebSpire",
+        title="Comprehensive Enterprise Software Development and Cloud Architecture Services | AcmeCorp",
         description="Explore our comprehensive enterprise software development services, cloud infrastructure management, UI/UX product design, and digital acceleration strategies for modern enterprises.",
-        canonical_url="https://webspire-agency.vercel.app/services",
+        canonical_url="https://demo-site.example.com/services",
         target_file="app/services/page.tsx",
         is_demo=False
     )
@@ -741,10 +741,10 @@ def test_snippet_title_and_meta_length_constraints():
 def test_sitemap_post_fix_state_and_no_changefreq():
     """Verify sitemap.xml and app/sitemap.ts omit changefreq/priority, include post-fix canonical fixes, and real dates."""
     sitemap_items = [
-        {"url": "https://webspire-agency.vercel.app/", "lastmod": "2026-03-01", "has_real_date": True},
-        {"url": "https://webspire-agency.vercel.app/services", "lastmod": "2026-03-01", "has_real_date": True},
+        {"url": "https://demo-site.example.com/", "lastmod": "2026-03-01", "has_real_date": True},
+        {"url": "https://demo-site.example.com/services", "lastmod": "2026-03-01", "has_real_date": True},
         {
-            "url": "https://webspire-agency.vercel.app/portfolio",
+            "url": "https://demo-site.example.com/portfolio",
             "lastmod": "",
             "has_real_date": False,
             "note": "Assumes canonical fix applied"
@@ -756,14 +756,14 @@ def test_sitemap_post_fix_state_and_no_changefreq():
     assert "<priority>" not in xml
     assert "<lastmod>2026-03-01</lastmod>" in xml
     assert "<!-- Assumes canonical fix applied -->" in xml
-    assert "<loc>https://webspire-agency.vercel.app/portfolio</loc>" in xml
+    assert "<loc>https://demo-site.example.com/portfolio</loc>" in xml
 
     ts = CodeTemplateEngine.render_nextjs_sitemap_ts(sitemap_items)
     assert "changeFrequency" not in ts
     assert "priority" not in ts
     assert "lastModified: new Date('2026-03-01')" in ts
     assert "// Assumes canonical fix applied" in ts
-    assert "https://webspire-agency.vercel.app/portfolio" in ts
+    assert "https://demo-site.example.com/portfolio" in ts
 
 
 def test_sequential_issue_ids_and_source_field():
@@ -820,8 +820,8 @@ def test_sequential_issue_ids_and_source_field():
 def test_nextjs_14_and_15_dynamic_blog_snippets():
     """Verify both Next.js 14 (sync params) and 15+ (async Promise params) dynamic route outputs."""
     v14_snippet = CodeTemplateEngine.render_nextjs_blog_dynamic_metadata(
-        base_url="https://webspire-agency.vercel.app",
-        brand_name="WebSpire",
+        base_url="https://demo-site.example.com",
+        brand_name="AcmeCorp",
         target_file="app/blog/[slug]/page.tsx",
         nextjs_version="14"
     )
@@ -831,8 +831,8 @@ def test_nextjs_14_and_15_dynamic_blog_snippets():
     assert "NOTE: In production, title, description, and canonical must be fetched from your" in v14_snippet
 
     v15_snippet = CodeTemplateEngine.render_nextjs_blog_dynamic_metadata(
-        base_url="https://webspire-agency.vercel.app",
-        brand_name="WebSpire",
+        base_url="https://demo-site.example.com",
+        brand_name="AcmeCorp",
         target_file="app/blog/[slug]/page.tsx",
         nextjs_version="15+"
     )

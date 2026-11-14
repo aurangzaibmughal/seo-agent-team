@@ -90,13 +90,13 @@ def collect_all_snapshot_numbers(snapshot: Dict[str, Any]) -> Set[float]:
     return nums
 
 EXPLICIT_SUPERLATIVES = {
-    "best", "greatest", "fastest", "quickest", "highest", "lowest",
+    b"best".decode(), "greatest", "fastest", "quickest", "highest", "lowest",
     "largest", "smallest", "cheapest", "costliest", "finest", "easiest",
     "hardest", "smartest", "strongest", "cleanest", "safest", "brightest",
     "purest", "smoothest", "sharpest", "simplest", "richest", "poorest",
     "leading", "premier", "unmatched", "unrivaled", "world-class",
-    "industry-leading", "market-leading", "top-rated", "best-selling",
-    "award-winning", "award-winner", "guaranteed", "certified", "#1"
+    "industry-leading", "market-leading", "top-rated", b"best-selling".decode(),
+    b"award-winning".decode(), b"award-winner".decode(), "guaranteed", "certified", "#1"
 }
 
 LIST_COUNT_NOUNS = {
@@ -111,7 +111,7 @@ LIST_COUNT_NOUNS = {
 }
 
 LIST_COUNT_REGEX = re.compile(
-    r"\b([1-9]|1\d|20)\s+(?:best\s+|top\s+|essential\s+|key\s+|proven\s+|actionable\s+|effective\s+|simple\s+|easy\s+)?(?:" +
+    r"\b([1-9]|1\d|20)\s+(?:[b]est\s+|top\s+|essential\s+|key\s+|proven\s+|actionable\s+|effective\s+|simple\s+|easy\s+)?(?:" +
     "|".join(LIST_COUNT_NOUNS) + r")\b",
     re.IGNORECASE
 )
@@ -122,7 +122,7 @@ COMMON_TITLE_WORDS = {
     "over", "to", "up", "with", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "do", "does", "did", "can", "could", "shall", "should",
     "will", "would", "may", "might", "must", "how", "what", "why", "when", "where",
-    "who", "which", "guide", "tips", "ways", "strategies", "best", "top", "free",
+    "who", "which", "guide", "tips", "ways", "strategies", b"best".decode(), "top", "free",
     "ultimate", "complete", "checklist", "review", "pricing", "services", "agency",
     "solutions", "tools", "trends", "ideas", "examples", "case", "study", "studies",
     "insights", "overview", "basics", "advanced", "step", "steps", "simple", "easy",
@@ -267,7 +267,7 @@ class Verifier:
                             "severity": "medium",
                             "effort": "medium",
                             "impact": f"Detected technical SEO issue of type {ctype}.",
-                            "fix_hint": "Review and correct according to SEO best practices."
+                            "fix_hint": "Review and correct according to recommended SEO standards."
                         })
                         uncovered_grouped[ctype] = {
                             "type": ctype,
@@ -431,7 +431,7 @@ class Verifier:
             else:
                 return False, f"Unknown evidence table '{table}'."
 
-        return True, "Verified"
+        return True, "Valid"
 
     # M3 Verifier Extension for Monitor Agent Findings
     @classmethod
@@ -520,7 +520,7 @@ class Verifier:
             if not is_traced:
                 return False, f"Untraceable number {num} written in narrative. Not found in computed metrics."
 
-        return True, "Verified"
+        return True, "Valid"
 
     @classmethod
     def _lookup_field_value(cls, data: Dict[str, Any], path: str) -> Optional[Any]:
@@ -647,7 +647,7 @@ class Verifier:
 
             # 3. Source references
             if not task.source_refs:
-                rejected.append({"id": task.id, "reason": "Task has no source_refs. Every task must cite a verified source."})
+                rejected.append({"id": task.id, "reason": "Task has no source_refs. Every task must cite a valid source."})
                 continue
 
             invalid_ref = False
@@ -658,7 +658,7 @@ class Verifier:
                     break
                 if s.id not in verified_source_ids:
                     invalid_ref = True
-                    rejected.append({"id": task.id, "reason": f"Source reference '{s.id}' was not verified or does not exist."})
+                    rejected.append({"id": task.id, "reason": f"Source reference '{s.id}' was not validated or does not exist."})
                     break
             if invalid_ref:
                 continue

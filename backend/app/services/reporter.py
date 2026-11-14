@@ -72,7 +72,9 @@ class ReportExporter:
         is_demo: bool = False,
         agency_name: Optional[str] = None,
         include_unreviewed: bool = False,
-        crawl_pages: Optional[List[Dict[str, Any]]] = None
+        crawl_pages: Optional[List[Dict[str, Any]]] = None,
+        strict_lint_gate: bool = False,
+        **kwargs
     ) -> str:
         # Filter items based on review status
         verified_issues = cls.filter_by_review(job_id, verified_issues, "technical_issue", include_unreviewed)
@@ -123,7 +125,7 @@ class ReportExporter:
         job_info = DBManager.get_job(job_id) or {}
 
         # Report-Time QA Linter Gate (A-16): checks evidence, metric plausibility, and speed issue counts vs PSI table
-        from app.services.report_linter import lint_audit_report
+        from app.services.report_linter import lint_audit_report, ReportLintGateError
         strat_tasks = strategy_data.get("tasks", []) if strategy_data else []
         rws = content_data.get("rewrites", []) if content_data else []
         effective_psi = psi_data if psi_data is not None else (DBManager.get_psi_results(job_id) or [])
@@ -139,6 +141,8 @@ class ReportExporter:
             print(f"[Report-Time Linter Gate] {len(qa_warnings)} QA warning(s) detected for job {job_id}:")
             for w in qa_warnings:
                 print(f"  - {w}")
+            if strict_lint_gate:
+                raise ReportLintGateError(qa_warnings)
 
         pages_crawled = job_info.get("pages_crawled", len(crawl_pages or []))
         max_pages = job_info.get("max_pages", 100)

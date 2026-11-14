@@ -404,9 +404,9 @@ Sitemap: {{ sitemap_url }}
 """
 
 TPL_LLMS_TXT = """# {{ site_name }}
-
+{% if site_summary %}
 > {{ site_summary }}
-
+{% endif %}
 ## Key Resources
 {% for link in curated_links %}
 - [{{ link.title }}]({{ link.url }}): {{ link.description }}
@@ -550,7 +550,7 @@ class CodeTemplateEngine:
         return t.render(header=header, sitemap_url=sitemap_url, disallow_paths=disallow_paths or [])
 
     @classmethod
-    def render_llms_txt(cls, site_name: str, site_summary: str, base_url: str, curated_links: List[Dict[str, str]], is_demo: bool = False) -> str:
+    def render_llms_txt(cls, site_name: str, site_summary: Optional[str], base_url: str, curated_links: List[Dict[str, str]], is_demo: bool = False) -> str:
         # LLMS.TXT standard strictly requires # H1 as the very first line - no header comments
         clean_links = []
         for lk in curated_links:
@@ -559,7 +559,7 @@ class CodeTemplateEngine:
                 "url": lk.get("url", "").strip(),
                 "description": truncate_at_word_boundary(lk.get("description", ""), 140)
             })
-        clean_summary = truncate_at_word_boundary(site_summary, 200)
+        clean_summary = truncate_at_word_boundary(site_summary, 200) if site_summary else ""
 
         t = Template(TPL_LLMS_TXT)
         return t.render(

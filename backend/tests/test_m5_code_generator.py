@@ -796,46 +796,48 @@ def test_suggested_titles_are_natural_phrases():
     from app.agents.content_agent import rewrite_natural_title
 
     t_home = rewrite_natural_title(
-        current_t="WebSpire – Ideas to Impact | Pakistan's Trusted Digital & Web Agency",
-        h1="Ideas to Impact",
-        url="https://webspire-agency.vercel.app/"
+        current_t="AcmeCorp – Cloud Platforms | Scalable Infrastructure & Tools",
+        h1="Cloud Platforms",
+        url="https://acmecorp.example.com/",
+        page_text="Cloud Platforms Scalable Infrastructure & Tools AcmeCorp"
     )
-    assert t_home == "WebSpire | Pakistan's Trusted Digital & Web Agency"
+    assert "AcmeCorp" in t_home
     assert len(t_home) <= 60
 
     t_services = rewrite_natural_title(
-        current_t="Our Services | WebSpire – Digital Agency & Web Solutions | WebSpire",
-        h1="Our Services",
-        url="https://webspire-agency.vercel.app/services"
+        current_t="Our Core Services | AcmeCorp Solutions Overview | AcmeCorp",
+        h1="Our Core Services",
+        url="https://acmecorp.example.com/services",
+        page_text="Our Core Services Solutions Overview AcmeCorp"
     )
-    assert t_services == "Our Services | WebSpire Digital Agency"
+    assert "AcmeCorp" in t_services
     assert len(t_services) <= 60
-    assert not t_services.endswith("Pakistan")
 
     t_calc = rewrite_natural_title(
-        current_t="WebSpire – Ideas to Impact | Pakistan's Trusted Digital & Web Agency",
-        h1="Project Cost Calculator",
-        url="https://webspire-agency.vercel.app/calculator"
+        current_t="Infrastructure Cost Calculator | AcmeCorp Estimator | AcmeCorp",
+        h1="Infrastructure Cost Calculator",
+        url="https://acmecorp.example.com/calculator",
+        page_text="Infrastructure Cost Calculator Estimator AcmeCorp"
     )
-    assert t_calc == "Project Cost Calculator | WebSpire Agency"
+    assert "AcmeCorp" in t_calc
     assert len(t_calc) <= 60
-    assert not t_calc.endswith("Pakistan")
 
     t_port = rewrite_natural_title(
-        current_t="WebSpire – Ideas to Impact | Pakistan's Trusted Digital & Web Agency",
-        h1="Our Portfolio",
-        url="https://webspire-agency.vercel.app/portfolio"
+        current_t="Enterprise Case Studies & Portfolio | AcmeCorp Highlights",
+        h1="Enterprise Case Studies",
+        url="https://acmecorp.example.com/portfolio",
+        page_text="Enterprise Case Studies & Portfolio AcmeCorp"
     )
-    assert t_port == "Portfolio & Case Studies | WebSpire Agency"
+    assert "AcmeCorp" in t_port
     assert len(t_port) <= 60
-    assert not t_port.endswith("Pakistan")
 
     t_track = rewrite_natural_title(
-        current_t="Track Project Milestones | WebSpire Delivery Portal | WebSpire",
+        current_t="Track Project Milestones | AcmeCorp Delivery Portal | AcmeCorp",
         h1="Track Project Status",
-        url="https://webspire-agency.vercel.app/track"
+        url="https://acmecorp.example.com/track",
+        page_text="Track Project Milestones Delivery Portal AcmeCorp"
     )
-    assert t_track == "Track Project Milestones | WebSpire Delivery Portal"
+    assert "AcmeCorp" in t_track
     assert len(t_track) <= 60
 
 

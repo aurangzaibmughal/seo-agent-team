@@ -34,21 +34,32 @@ def compute_median_psi_results(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
     base["runs_count"] = len(valid_runs)
     return base
 
-def get_lcp_subscore(lcp_ms: float) -> float:
-    """Estimates the Lighthouse LCP metric score [0.0, 1.0].
-    Lighthouse curve: <= 2500ms -> 1.0, >= 8000ms -> 0.0.
+def get_lcp_subscore(lcp_ms: float, strategy: str = "mobile") -> float:
+    """Estimates the Lighthouse LCP metric score [0.0, 1.0] device-specifically.
+    Mobile: <= 2500ms -> 1.0, >= 8000ms -> 0.0.
+    Desktop: <= 1200ms -> 1.0, >= 4000ms -> 0.0.
     """
-    if lcp_ms <= 2500.0:
-        return 1.0
-    elif lcp_ms >= 8000.0:
-        return 0.0
+    if strategy == "desktop":
+        if lcp_ms <= 1200.0:
+            return 1.0
+        elif lcp_ms >= 4000.0:
+            return 0.0
+        else:
+            return max(0.0, min(1.0, 1.0 - (lcp_ms - 1200.0) / (4000.0 - 1200.0)))
     else:
-        return max(0.0, min(1.0, 1.0 - (lcp_ms - 2500.0) / (8000.0 - 2500.0)))
+        if lcp_ms <= 2500.0:
+            return 1.0
+        elif lcp_ms >= 8000.0:
+            return 0.0
+        else:
+            return max(0.0, min(1.0, 1.0 - (lcp_ms - 2500.0) / (8000.0 - 2500.0)))
 
 def check_metric_consistency(
     performance_score: Optional[int],
     lcp_ms: Optional[float],
-    cls: Optional[float]
+    cls: Optional[float],
+    strategy: str = "mobile",
+    psi_lcp_score: Optional[float] = None
 ) -> Dict[str, Any]:
     """Sanity check whether performance score and core metrics are mutually consistent.
     In Lighthouse scoring curves, LCP has 25% weight. The maximum possible overall
@@ -60,15 +71,22 @@ def check_metric_consistency(
     if performance_score is None:
         return {"is_consistent": True, "reason": ""}
 
-    if lcp_ms is not None:
-        lcp_subscore = get_lcp_subscore(lcp_ms)
+    if psi_lcp_score is not None:
+        lcp_subscore = psi_lcp_score
+    elif lcp_ms is not None:
+        lcp_subscore = get_lcp_subscore(lcp_ms, strategy=strategy)
+    else:
+        lcp_subscore = None
+
+    if lcp_subscore is not None:
         max_possible_score = round(100.0 - 25.0 * (1.0 - lcp_subscore))
         if performance_score > max_possible_score:
+            lcp_desc = f"{lcp_ms/1000:.1f}s" if lcp_ms is not None else f"subscore {lcp_subscore:.2f}"
             return {
                 "is_consistent": False,
                 "reason": (
                     f"Performance score of {performance_score} exceeds the theoretical maximum "
-                    f"({max_possible_score}) for LCP of {lcp_ms/1000:.1f}s (Lighthouse weight 25%)."
+                    f"({max_possible_score}) for {strategy} LCP of {lcp_desc} (Lighthouse weight 25%)."
                 )
             }
 

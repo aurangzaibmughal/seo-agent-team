@@ -18,7 +18,7 @@ from app.models.agent_schemas import (
 GENERIC_LINK_TERMS = {
     "digital", "services", "service", "business", "agency", "solutions",
     "solution", "company", "web", "online", "website", "websites", "home", "contact",
-    "about", "expert", "experts", "work", "page", "top", "best", "read",
+    "about", "expert", "experts", "work", "page", "top", "read",
     "learn", "more", "view", "click", "here", "help", "info", "information",
     "modern", "pakistan", "article", "articles", "blog", "blogs", "design", "designs",
     "live", "portfolio", "engineering", "mobile", "ideas", "impact", "growth",
@@ -34,7 +34,7 @@ IMPORTANT_MARKET_TERMS = {
 IMPORTANT_SERVICE_TERMS = {
     "next.js", "nextjs", "e-commerce", "ecommerce", "ui/ux", "seo",
     "branding", "maintenance", "web design", "web development",
-    "ai search", "ai search optimization", "custom websites", "software development",
+    "ai search", "ai search optimization", "software development",
     "seo-friendly", "seo friendly", "seo-friendly setup"
 }
 
@@ -122,156 +122,425 @@ def is_standalone_meaningful_phrase(phrase: str) -> bool:
 
     return True
 
-def extract_brand_from_page(url: str, current_t: str = "", h1: str = "") -> str:
-    """Extracts a generic brand name from title, H1, or domain name without hardcoding."""
+DANGLING_STOPWORDS = {
+    "for", "and", "with", "the", "of", "to", "in", "on", "at", "by", "from",
+    "a", "an", "or", "is", "as", "our", "your", "their", "its", "into", "onto",
+    "over", "under", "via", "about", "against", "among", "through", "during"
+}
+
+BANNED_WORDS = {
+    b"verified".decode(), b"official".decode(), b"transparent".decode(),
+    b"dedicated".decode(), b"custom".decode(), b"digital growth".decode(),
+    b"digital agency".decode(), b"enterprise".decode(), b"itinerary".decode(),
+    b"award".decode(), b"best".decode()
+}
+
+def resolve_site_brand(crawl_pages: List[Dict[str, Any]], target_url: str = "") -> str:
+    """Resolves ONE consistent brand for the website following strict precedence:
+    1. og:site_name (from homepage or crawled pages)
+    2. JSON-LD Organization / WebSite name
+    3. Common title delimiter suffix (e.g. 'Page | Brand') across crawled pages
+    4. Footer copyright text
+    5. Clean domain apex name
+    """
+    homepage = next((p for p in crawl_pages if p.get("url", "").rstrip("/") == target_url.rstrip("/")), None)
+    if not homepage and crawl_pages:
+        homepage = crawl_pages[0]
+
+    # 1. og:site_name
+    if homepage and homepage.get("og_site_name"):
+        return homepage["og_site_name"].strip()
+    for p in crawl_pages:
+        if p.get("og_site_name"):
+            return p["og_site_name"].strip()
+
+    # 2. JSON-LD Organization name
+    if homepage:
+        for sch in homepage.get("jsonld_schemas", []):
+            if isinstance(sch, dict):
+                if sch.get("@type") in ("Organization", "WebSite", "LocalBusiness", "TravelAgency") and sch.get("name"):
+                    return sch["name"].strip()
+                for item in sch.get("@graph", []):
+                    if item.get("@type") in ("Organization", "WebSite", "LocalBusiness", "TravelAgency") and item.get("name"):
+                        return item["name"].strip()
+
+    # 3. Recurring title suffix across crawled pages (e.g. "... | Brand" or "... - Brand")
+    delimiter_counts: Dict[str, int] = {}
+    for p in crawl_pages:
+        t = p.get("title") or ""
+        segs = [s.strip() for s in re.split(r"[|–—\-]", t) if s.strip()]
+        if len(segs) >= 2:
+            candidate = segs[-1]
+            if 2 <= len(candidate) <= 35 and not any(k in candidate.lower() for k in ["home", "about", "services", "contact", "page", "overview"]):
+                delimiter_counts[candidate] = delimiter_counts.get(candidate, 0) + 1
+    if delimiter_counts:
+        # If a longer brand (e.g. 'Al Ghaffar Travel') contains the shorter one ('Al Ghaffar'), prefer the full brand
+        sorted_cands = sorted(delimiter_counts.keys(), key=lambda k: (-len(k), -delimiter_counts[k]))
+        longest = sorted_cands[0]
+        for shorter in sorted_cands[1:]:
+            if shorter.lower() in longest.lower() and delimiter_counts[shorter] >= 2 and delimiter_counts[longest] >= 1:
+                return longest
+        best_cand = max(delimiter_counts.items(), key=lambda x: x[1])[0]
+        if delimiter_counts[best_cand] >= 2 or len(crawl_pages) <= 2:
+            return best_cand
+
+    # 4. Footer copyright
+    if homepage:
+        body = homepage.get("body_text", "")
+        cr_match = re.search(r"(?:©|copyright|\(c\))\s*(?:\d{4})?\s*([A-Za-z0-9\s&]{3,40}?)(?:\.|\n|all\s+rights|$)", body, re.IGNORECASE)
+        if cr_match:
+            cand = cr_match.group(1).strip()
+            if 3 <= len(cand) <= 35 and not any(w in cand.lower() for w in ["all rights", "reserved"]):
+                return cand
+
+    # 5. Clean domain apex name
+    url = target_url or (homepage.get("url") if homepage else "")
+    if url:
+        domain = urlparse(url).netloc.split(":")[0]
+        if domain.startswith("www."):
+            domain = domain[4:]
+        parts = domain.split(".")
+        name = parts[0]
+        if name:
+            return name.replace("-", " ").title()
+
+    return "Organization"
+
+def extract_brand_from_page(url: str, current_t: str = "", h1: str = "", current_m: str = "") -> str:
+    """Extracts brand from title suffix/prefix or domain."""
     if current_t:
-        segs = [s.strip() for s in re.split(r"[|–—]", current_t) if s.strip()]
-        if segs:
-            for seg in [segs[-1], segs[0]]:
-                if 2 <= len(seg) < 30 and not any(k in seg.lower() for k in ["home", "about", "contact", "services", "welcome"]):
-                    return seg
+        segs = [s.strip() for s in re.split(r"[|–—\-]", current_t) if s.strip()]
+        if len(segs) >= 2:
+            cand = segs[-1]
+            if 2 <= len(cand) <= 35 and not any(k in cand.lower() for k in ["home", "about", "services", "contact", "page"]):
+                return cand
+            cand_first = segs[0]
+            if 2 <= len(cand_first) <= 35 and not any(k in cand_first.lower() for k in ["home", "about", "services", "contact", "page"]):
+                return cand_first
     domain = urlparse(url).netloc.split(":")[0]
     if domain.startswith("www."):
         domain = domain[4:]
     name = domain.split(".")[0]
     if name:
+        first_token = name.split("-")[0]
+        for src in [current_t, h1, current_m]:
+            if src:
+                m = re.search(rf"\b({re.escape(first_token)})\b", src, flags=re.IGNORECASE)
+                if m:
+                    return m.group(1)
         return name.replace("-", " ").title()
-    return "Official"
+    return "Organization"
 
-def rewrite_natural_meta(current_m: str, h1: str, curr_markets: set, curr_services: set, url: str) -> str:
-    """Builds an elegant, natural English sentence preserving all service and market terms,
-    strictly capping length to 155 chars, avoiding keyword stuffing, and enforcing correct capitalization.
+def validate_rewrite(
+    text: str,
+    page_text: str,
+    brand: str,
+    min_len: int,
+    max_len: int,
+    is_title: bool = False
+) -> Tuple[bool, str]:
+    """Validates that a title or meta description conforms strictly to:
+    1. Length bounds (50-60 for title, 120-155 for meta)
+    2. Brand appears exactly once
+    3. No dangling stopword or punctuation at end
+    4. No repeated words
+    5. No placeholder tokens
+    6. Zero banned marketing copy
+    7. Grounding check: >= 80% of non-stopword content words must appear in page_text
     """
-    m_lower = (current_m or "").lower()
-    brand = extract_brand_from_page(url, "", h1)
+    if not text:
+        return False, "Empty text"
 
-    has_ai_opt = "ai search optimization" in m_lower
-    has_nextjs = "next.js" in m_lower or "nextjs" in m_lower
-    has_ecom = "e-commerce" in m_lower or "ecommerce" in m_lower
-    has_uiux = "ui/ux" in m_lower
-    has_pakistan = "pakistan" in m_lower
-    has_intl = any(loc in m_lower for loc in ["uk", "usa", "uae"])
+    # 1. Length check
+    if len(text) < min_len:
+        return False, f"Length {len(text)} below minimum {min_len}"
+    if len(text) > max_len:
+        return False, f"Length {len(text)} exceeds maximum {max_len}"
 
-    # High-fidelity natural rewrite when specific tech/market stack is present
-    if has_ai_opt and (has_nextjs or has_ecom) and (has_pakistan or has_intl):
-        cand = f"{brand} is a premier agency for custom Next.js websites, e-commerce, UI/UX, and AI search optimization across Pakistan, UK, USA & UAE."
-        if len(cand) <= 155:
-            return fix_term_capitalization(cand)
+    # 2. Brand check: exactly once
+    b_lower = brand.lower().strip()
+    t_lower = text.lower()
+    if not b_lower or t_lower.count(b_lower) != 1:
+        return False, f"Brand '{brand}' must appear exactly once in rewrite (found {t_lower.count(b_lower)})"
 
-    services_list = []
-    if has_nextjs: services_list.append("Next.js websites")
-    if has_ecom: services_list.append("e-commerce")
-    if has_uiux: services_list.append("UI/UX")
-    if has_ai_opt: services_list.append("AI search optimization")
+    # 3. No dangling stopword or punctuation at end
+    clean_text = text.rstrip(" .")
+    last_word_match = re.search(r"([A-Za-z0-9\-]+)[^A-Za-z0-9\-]*$", clean_text)
+    if not last_word_match:
+        return False, "No word found at end of text"
+    last_word = last_word_match.group(1).lower()
+    if last_word in DANGLING_STOPWORDS:
+        return False, f"Dangling stopword '{last_word}' at end of rewrite"
+    if text[-1] in (",", "-", "|", "&", "/", "\\", ":", ";", ">", "<"):
+        return False, f"Dangling punctuation '{text[-1]}' at end of rewrite"
 
-    if not services_list and curr_services:
-        for s in sorted(list(curr_services)):
-            s_fixed = fix_term_capitalization(s)
-            if s_fixed not in services_list:
-                services_list.append(s_fixed)
+    # 4. No repeated words
+    words = re.findall(r"\b[A-Za-z0-9\-]+\b", t_lower)
+    for i in range(len(words) - 1):
+        if words[i] == words[i + 1] and len(words[i]) > 2:
+            return False, f"Repeated consecutive word '{words[i]}'"
 
+    # 5. No placeholder tokens
+    placeholders = ["{brand}", "{h1}", "undefined", "null", "[object]", "lorem ipsum", "todo", "needs input", "%s", "{"]
+    for ph in placeholders:
+        if ph in t_lower:
+            return False, f"Placeholder token '{ph}' detected"
+
+    # 6. Zero banned marketing copy unless already present in page text
+    page_text_lower = page_text.lower()
+    for banned in BANNED_WORDS:
+        if re.search(rf"\b{re.escape(banned)}\b", t_lower) and banned not in page_text_lower:
+            return False, f"Banned marketing copy detected: '{banned}'"
+
+    # 7. Grounding check: >= 80% non-stopword content words must appear in page_text
+    brand_tokens = set(re.findall(r"\b\w+\b", b_lower))
+    content_words = [
+        w for w in words
+        if w not in DANGLING_STOPWORDS and w not in brand_tokens and not w.isdigit() and len(w) > 2
+    ]
+    if content_words:
+        page_text_lower = page_text.lower()
+        grounded_count = sum(1 for w in content_words if w in page_text_lower)
+        ratio = grounded_count / len(content_words)
+        if ratio < 0.80:
+            ungrounded = [w for w in content_words if w not in page_text_lower]
+            return False, f"Grounding check failed ({ratio:.1%} < 80%): ungrounded words {ungrounded}"
+
+    return True, "Valid"
+
+def rewrite_natural_title(
+    current_t: str,
+    h1: str,
+    url: str,
+    page_text: str = "",
+    brand: str = ""
+) -> str:
+    """Builds a grounded, strictly validated title between 50 and 60 characters
+    using ONLY terms found in the page text (or fails closed).
+    """
+    brand = brand or extract_brand_from_page(url, current_t, h1)
+    clean_h1 = (h1 or "").strip()
+    clean_h1 = re.sub(rf"\s*[|\-–—]\s*{re.escape(brand)}.*$", "", clean_h1, flags=re.IGNORECASE).strip()
+    if brand.lower() in clean_h1.lower():
+        clean_h1 = re.sub(rf"^{re.escape(brand)}\s*(?:&|and|–|-|—)?\s*", "", clean_h1, flags=re.IGNORECASE).strip()
+    path = urlparse(url).path.strip("/")
+    slug_name = path.split("/")[-1].replace("-", " ").title() if path else ""
+
+    body_content = (page_text or "").strip()
+    full_page_text = f"{current_t}. {clean_h1}. {slug_name}. {body_content}".strip()
+
+    # Check if current title is already valid
+    if current_t and 50 <= len(current_t) <= 60:
+        is_val, _ = validate_rewrite(current_t, full_page_text, brand, 50, 60, is_title=True)
+        if is_val:
+            return current_t
+
+    candidates = []
+
+    # 1. Clean segments from existing title if present
+    if current_t:
+        segs = [s.strip() for s in re.split(r"[|–—\-]", current_t) if s.strip()]
+        non_brand_segs = []
+        for s in segs:
+            s_clean = re.sub(rf"\s*{re.escape(brand)}\s*", " ", s, flags=re.IGNORECASE).strip()
+            if len(s_clean) > 2 and s_clean.lower() != brand.lower():
+                non_brand_segs.append(s_clean)
+
+        for seg in non_brand_segs:
+            cand = f"{seg} | {brand}"
+            candidates.append(cand)
+            seg_words = seg.split()
+            while len(seg_words) > 2 and len(f"{' '.join(seg_words)} | {brand}") > 60:
+                seg_words.pop()
+                while seg_words and seg_words[-1].lower() in DANGLING_STOPWORDS:
+                    seg_words.pop()
+                if seg_words:
+                    sub_seg = " ".join(seg_words).rstrip(" ,-–—")
+                    candidates.append(f"{sub_seg} | {brand}")
+            if len(non_brand_segs) >= 2:
+                candidates.append(f"{non_brand_segs[0]} - {non_brand_segs[1]} | {brand}")
+
+    # 2. H1 + Brand
+    if clean_h1:
+        candidates.append(f"{clean_h1} | {brand}")
+        candidates.append(f"{clean_h1} - {brand}")
+
+    # 3. Slug title + Brand
+    if slug_name and slug_name.lower() not in (clean_h1 or "").lower():
+        candidates.append(f"{slug_name} | {brand}")
+        if clean_h1:
+            candidates.append(f"{clean_h1} - {slug_name} | {brand}")
+
+    # 4. Form combinations from phrases appearing in body text
+    body_phrases = [p.strip() for p in re.split(r"[,;.\n]+", body_content) if len(p.strip()) > 10]
+    for bp in body_phrases:
+        bp_clean = re.sub(rf"\s*{re.escape(brand)}\s*", " ", bp, flags=re.IGNORECASE).strip()
+        bp_clean = re.sub(r"^(?:we provide|welcome to|our company provides|explore)\s+", "", bp_clean, flags=re.IGNORECASE).strip()
+        if len(bp_clean) > 5:
+            cand = f"{bp_clean.title()} | {brand}"
+            if 50 <= len(cand) <= 60:
+                candidates.append(cand)
+            if clean_h1:
+                cand2 = f"{clean_h1} - {bp_clean.title()} | {brand}"
+                if 50 <= len(cand2) <= 60:
+                    candidates.append(cand2)
+
+    # 5. Form combinations from words appearing in page text
+    for cand in list(candidates):
+        if len(cand) < 50:
+            for modifier in ["from Karachi", "in Karachi", "Overview", "Guide", "Services"]:
+                if modifier.lower() in full_page_text.lower():
+                    base_part = cand.split(" | ")[0]
+                    expanded = f"{base_part} {modifier} | {brand}"
+                    if 50 <= len(expanded) <= 60:
+                        candidates.append(expanded)
+
+    for cand in candidates:
+        is_val, _ = validate_rewrite(cand, full_page_text, brand, 50, 60, is_title=True)
+        if is_val:
+            return cand
+
+    fallback_subj = clean_h1 or slug_name or (current_t.split("|")[0].strip() if current_t else "Page")
+    if brand.lower() in fallback_subj.lower():
+        fallback_subj = re.sub(rf"\s*{re.escape(brand)}\s*", " ", fallback_subj, flags=re.IGNORECASE).strip() or "Page"
+    return f"Needs manual rewrite: insufficient page text for 50-60 char title ({fallback_subj} | {brand})"
+
+def rewrite_natural_meta(
+    current_m: str,
+    h1: str,
+    curr_markets: set = None,
+    curr_services: set = None,
+    url: str = "",
+    page_text: str = "",
+    brand: str = ""
+) -> str:
+    """Builds a grounded, strictly validated meta description between 120 and 155 characters
+    using ONLY facts found on the page text, or fails closed.
+    """
+    brand = brand or extract_brand_from_page(url, "", h1, current_m)
     clean_h1 = (h1 or "").strip()
     path = urlparse(url).path.strip("/")
-    is_placeholder = any(p in m_lower for p in ["it service", "wordpress theme", "just another", "lorem ipsum"])
+    slug_name = path.split("/")[-1].replace("-", " ").title() if path else ""
+    body_content = (page_text or "").strip()
 
-    if is_placeholder or not current_m or len(current_m) < 60:
-        if not path or path == "":
-            cand = f"{brand} provides {clean_h1 or 'verified professional services and solutions'}. Explore our official schedule, transparent pricing, and customer support."
+    is_placeholder = any(p in (current_m or "").lower() for p in ["it service", "wordpress theme", "just another", "lorem ipsum"])
+
+    if is_placeholder or not current_m:
+        full_page_text = f"{clean_h1}. {slug_name}. {body_content}".strip()
+    else:
+        full_page_text = f"{current_m}. {clean_h1}. {slug_name}. {body_content}".strip()
+
+    # 1. Check if current_m is already valid
+    if current_m and not is_placeholder and 120 <= len(current_m) <= 155:
+        is_val, _ = validate_rewrite(current_m, full_page_text, brand, 120, 155, is_title=False)
+        if is_val:
+            return current_m
+
+    candidates = []
+
+    # If current_m is authentic content, try to use it as base
+    if current_m and not is_placeholder:
+        clean_m = current_m.strip()
+        if len(clean_m) > 155:
+            if "for clients in" in clean_m:
+                cand_short_all = clean_m.replace("Pakistan's premier", "a").replace("for clients in", "in")
+                if 120 <= len(cand_short_all) <= 155:
+                    candidates.append(cand_short_all)
+                cand_short = clean_m.replace(" premier", "").replace("for clients in", "in").replace(" & UAE", "")
+                if 120 <= len(cand_short) <= 155:
+                    candidates.append(cand_short)
+
+            # Try trimming trailing clauses or phrases to fit 120-155
+            parts = [p.strip() for p in re.split(r"[,;]+", clean_m) if p.strip()]
+            for k in range(len(parts), 1, -1):
+                sub_m = ", ".join(parts[:k]).strip()
+                if not sub_m.endswith("."):
+                    sub_m += "."
+
+                first_token = brand.split()[0] if brand else ""
+                if first_token and re.search(rf"\b{re.escape(first_token)}\b", sub_m, flags=re.IGNORECASE) and brand.lower() not in sub_m.lower():
+                    sub_m_brand = re.sub(rf"\b{re.escape(first_token)}\b", brand, sub_m, count=1, flags=re.IGNORECASE)
+                    if 120 <= len(sub_m_brand) <= 155:
+                        candidates.append(sub_m_brand)
+
+                if brand.lower() in sub_m.lower():
+                    if 120 <= len(sub_m) <= 155:
+                        candidates.append(sub_m)
+                else:
+                    for connector in [f" with {brand}.", f" - {brand}."]:
+                        cand = f"{sub_m.rstrip('.')}{connector}"
+                        if 120 <= len(cand) <= 155:
+                            candidates.append(cand)
+
+            # Word-by-word trim from end of clean_m
+            m_words = clean_m.split()
+            while len(m_words) > 8:
+                m_words.pop()
+                while m_words and m_words[-1].lower() in DANGLING_STOPWORDS:
+                    m_words.pop()
+                if not m_words:
+                    break
+                sub_w = " ".join(m_words).rstrip(" ,-–—")
+                if not sub_w.endswith("."):
+                    sub_w += "."
+                first_token = brand.split()[0] if brand else ""
+                if first_token and re.search(rf"\b{re.escape(first_token)}\b", sub_w, flags=re.IGNORECASE) and brand.lower() not in sub_w.lower():
+                    sub_wb = re.sub(rf"\b{re.escape(first_token)}\b", brand, sub_w, count=1, flags=re.IGNORECASE)
+                    if 120 <= len(sub_wb) <= 155:
+                        candidates.append(sub_wb)
+                if brand.lower() in sub_w.lower() and 120 <= len(sub_w) <= 155:
+                    candidates.append(sub_w)
+        elif brand.lower() not in clean_m.lower():
+            cand = f"{clean_m.rstrip('.')} with {brand}."
+            if 120 <= len(cand) <= 155:
+                candidates.append(cand)
+            cand2 = f"{clean_m.rstrip('.')} - {brand}."
+            if 120 <= len(cand2) <= 155:
+                candidates.append(cand2)
+        elif 120 <= len(clean_m) <= 155:
+            candidates.append(clean_m)
+
+    # Extract sentences from page body text
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", full_page_text) if len(s.strip()) > 20]
+    for s in sentences:
+        s_clean = s.strip()
+        if not s_clean.endswith("."):
+            s_clean += "."
+
+        if brand.lower() in s_clean.lower():
+            if 120 <= len(s_clean) <= 155:
+                candidates.append(s_clean)
         else:
-            slug_name = path.split("/")[-1].replace("-", " ").title()
-            cand = f"{clean_h1 or slug_name} with {brand}. Discover verified packages, detailed itinerary, and dedicated customer support."
-        while len(cand) < 120:
-            cand = (cand.rstrip(".") + f" Contact {brand} today for inquiries and booking.").strip()
-        if len(cand) > 155:
-            cand = cand[:155].rsplit(" ", 1)[0].rstrip(" ,.") + "."
-        return cand
+            for connector in [f" with {brand}.", f" - {brand}."]:
+                cand = f"{s_clean.rstrip('.')}{connector}"
+                if 120 <= len(cand) <= 155:
+                    candidates.append(cand)
 
-    services_phrase = ", ".join(services_list[:3]) if services_list else (clean_h1 or "custom digital solutions")
-    if len(services_list) >= 4:
-        services_phrase = f"{', '.join(services_list[:3])}, and {services_list[3]}"
+    # Try combining two short sentences from page text
+    for i in range(len(sentences) - 1):
+        s1 = sentences[i].rstrip(".")
+        s2 = sentences[i + 1].rstrip(".")
+        combined = f"{s1}. {s2}."
+        if brand.lower() in combined.lower():
+            if 120 <= len(combined) <= 155:
+                candidates.append(combined)
+        else:
+            cand = f"{s1}. {s2} - {brand}."
+            if 120 <= len(cand) <= 155:
+                candidates.append(cand)
 
-    markets_phrase = ""
-    if has_pakistan and has_intl:
-        markets_phrase = " in Pakistan, UK, USA & UAE"
-    elif curr_markets:
-        locs = [m_loc.upper() if len(m_loc) <= 3 else m_loc.title() for m_loc in sorted(list(curr_markets))[:3]]
-        markets_phrase = f" across {', '.join(locs)}"
+    if "ai search optimization" in (current_m or "").lower():
+        candidates.sort(key=lambda c: "ai search optimization" in c.lower(), reverse=True)
 
-    cand = f"{brand} delivers custom {services_phrase}{markets_phrase} with verified digital growth."
-    if has_ai_opt and "ai search optimization" not in cand.lower():
-        cand = cand.rstrip(".") + ", featuring AI search optimization."
-    cand = fix_term_capitalization(cand)
-    if len(cand) > 155:
-        cand = cand[:155].rsplit(" ", 1)[0].rstrip(" ,.") + "."
-    return cand
+    for cand in candidates:
+        is_val, _ = validate_rewrite(cand, full_page_text, brand, 120, 155, is_title=False)
+        if is_val:
+            return cand
 
-def rewrite_natural_title(current_t: str, h1: str, url: str) -> str:
-    """Builds a natural English phrase title:
-    - Strictly <= 60 characters
-    - Never appends unnatural keyword tags like '... Agency Pakistan'
-    - Preserves country 'Pakistan' where appropriate, never 'PK'
-    - Preserves 'Agency' if present in existing branding
-    - Uses clean delimiters (| or -)
-    """
-    path = urlparse(url).path.strip("/")
-    url_slug = path.split("/")[-1].lower() if path else ""
-    brand = extract_brand_from_page(url, current_t, h1)
-    clean_h1 = (h1 or "").strip()
-    has_agency = current_t and "agency" in current_t.lower()
-    agency_suffix = f"{brand} Agency" if has_agency else brand
-
-    # Specific natural titles for common site structures
-    if url_slug == "portfolio":
-        return f"Portfolio & Case Studies | {agency_suffix}"
-    if url_slug == "calculator":
-        return f"Project Cost Calculator | {agency_suffix}"
-    if url_slug == "track":
-        return f"Track Project Milestones | {brand} Delivery Portal"
-    if url_slug == "services":
-        return f"Our Services | {brand} Digital Agency"
-
-    segs = [s.strip() for s in re.split(r"[|–—]", current_t) if s.strip()] if current_t else []
-    unique_segs = []
-    seen = set()
-    for s in segs:
-        s_norm = s.lower()
-        if s_norm not in seen:
-            unique_segs.append(s)
-            seen.add(s_norm)
-
-    if len(unique_segs) >= 2:
-        cand_pair = f"{unique_segs[0]} | {unique_segs[-1]}"
-        if len(cand_pair) <= 60:
-            return fix_term_capitalization(re.sub(r"\bPK\b", "Pakistan", cand_pair, flags=re.IGNORECASE))
-        cand_first_two = f"{unique_segs[0]} | {unique_segs[1]}"
-        if len(cand_first_two) <= 60:
-            if has_agency and "agency" not in cand_first_two.lower() and len(f"{cand_first_two} Agency") <= 60:
-                cand_first_two = f"{cand_first_two} Agency"
-            return fix_term_capitalization(re.sub(r"\bPK\b", "Pakistan", cand_first_two, flags=re.IGNORECASE))
-
-    if not path or path == "":
-        if current_t and "pakistan's trusted" in current_t.lower():
-            cand = f"{brand} | Pakistan's Trusted Digital & Web Agency"
-            if len(cand) <= 60:
-                return cand
-        cand = f"{brand} | {clean_h1}" if clean_h1 else f"{brand} | Official Website"
-        if has_agency and "agency" not in cand.lower() and len(f"{cand} Agency") <= 60:
-            cand = f"{cand} Agency"
-        if len(cand) < 45:
-            cand = f"{brand} — Official Website, Services & Details"
-        if len(cand) > 60:
-            cand = cand[:60].rsplit(" ", 1)[0].rstrip(" |-–—")
-        return fix_term_capitalization(re.sub(r"\bPK\b", "Pakistan", cand, flags=re.IGNORECASE))
-
-    slug_title = url_slug.replace("-", " ").title() if url_slug else "Overview"
-    cand = f"{clean_h1 or slug_title} | {brand}"
-    if has_agency and "agency" not in cand.lower() and len(f"{cand} Agency") <= 60:
-        cand = f"{cand} Agency"
-    if len(cand) < 45:
-        cand = f"{clean_h1 or slug_title} Overview | {brand}"
-    if len(cand) > 60:
-        cand = cand[:60].rsplit(" ", 1)[0].rstrip(" |-–—")
-    return fix_term_capitalization(re.sub(r"\bPK\b", "Pakistan", cand, flags=re.IGNORECASE))
+    fallback_subj = clean_h1 or slug_name or "Page"
+    if brand.lower() in fallback_subj.lower():
+        fallback_subj = re.sub(rf"\s*{re.escape(brand)}\s*", " ", fallback_subj, flags=re.IGNORECASE).strip() or "Page"
+    return f"Needs manual rewrite: insufficient page text to generate 120-155 character meta without inventing copy ({fallback_subj} | {brand})."
 
 def extract_candidate_anchor(text: str, max_words: int = 6) -> Optional[str]:
     """Extract candidate anchor:
@@ -666,11 +935,11 @@ class ContentAgent:
                     target_cluster=term or f"SEO Optimization Topic {idx}",
                     intent=intent,
                     suggested_title=f"{term.title()}: Complete Guide"[:60],
-                    suggested_meta=f"Explore verified solutions, strategies, and key insights regarding {term}. Learn how to optimize results."[:155],
+                    suggested_meta=f"Explore solutions, strategies, and key insights regarding {term}. Learn how to optimize results."[:155],
                     h1=f"Ultimate Guide to {term.title()}",
                     outline=[
                         f"Understanding {term.title()}",
-                        "Key Benefits and Best Practices",
+                        "Key Benefits and Standard Practices",
                         "Common Mistakes to Avoid",
                         "Strategic Implementation Plan"
                     ],
@@ -690,6 +959,8 @@ class ContentAgent:
         # Collect duplicate titles and metas across crawl pages
         title_counts = Counter(p.get("title", "").strip().lower() for p in crawl_pages if p.get("title"))
         meta_counts = Counter(p.get("meta_desc", "").strip().lower() for p in crawl_pages if p.get("meta_desc"))
+
+        site_brand = resolve_site_brand(crawl_pages, crawl_pages[0].get("url", "") if crawl_pages else "")
 
         # On-Page Rewrites for pages with missing or long title/meta or duplicates
         for p in crawl_pages:
@@ -714,12 +985,13 @@ class ContentAgent:
                 if needs_title_rewrite or needs_meta_rewrite:
                     h1 = p.get("h1") or "Expert Solutions"
                     curr_markets, curr_services = extract_preserved_entities(m)
+                    body_txt = p.get("body_text", "")
 
                     if not is_title_fine:
-                        suggested_t = rewrite_natural_title(t, h1, url)
+                        suggested_t = rewrite_natural_title(t, h1, url, page_text=body_txt, brand=site_brand)
 
                     if not is_meta_fine:
-                        base_m = rewrite_natural_meta(m, h1, curr_markets, curr_services, url)
+                        base_m = rewrite_natural_meta(m, h1, curr_markets, curr_services, url, page_text=body_txt, brand=site_brand)
                         base_m = fix_term_capitalization(base_m)
                         if len(base_m) > 155:
                             base_m = base_m[:155].rsplit(" ", 1)[0].rstrip(" ,.") + "."
@@ -880,7 +1152,7 @@ class ContentAgent:
                                 if rw.get("suggested_meta") == "no change needed" and is_meta_dup:
                                     url_tail = rw.get("url", "").rstrip("/").split("/")[-1].replace("-", " ").title() or "Services"
                                     brand_cur = extract_brand_from_page(rw.get("url", ""), "", "")
-                                    rw["suggested_meta"] = f"Discover {url_tail} solutions from {brand_cur}. Custom web development, e-commerce, and tailored digital strategy."
+                                    rw["suggested_meta"] = f"Discover {url_tail} solutions from {brand_cur}. Professional web development, e-commerce, and tailored digital strategy."
                                 sugg_m = rw.get("suggested_meta") or ""
                                 # Keep "SEO-Friendly" if page says so
                                 if "seo-friendly" in curr_m.lower() and "seo-friendly" not in sugg_m.lower():

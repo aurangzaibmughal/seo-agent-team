@@ -1,0 +1,279 @@
+import re
+from pathlib import Path
+from bs4 import BeautifulSoup
+from app.agents.content_agent import (
+    resolve_site_brand, validate_rewrite, rewrite_natural_title, rewrite_natural_meta
+)
+
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+
+# 13 Al Ghaffar Pages (empirical metadata from audit b18eb3cb)
+AL_GHAFFAR_13_PAGES = [
+    {
+        "url": "https://www.alghaffar.com.pk/",
+        "title": "Al Ghaffar Travel – Hajj, Umrah & Holiday Tour Packages Karachi",
+        "h1": "Al Ghaffar Travel & Tours",
+        "meta_desc": "IT Service WordPress Theme",
+        "body_text": "Explore top holiday tour packages and Umrah services in Karachi. Providing visa assistance, flight bookings, and family holiday tours."
+    },
+    {
+        "url": "https://www.alghaffar.com.pk/about/",
+        "title": "About Us | Al Ghaffar Travel",
+        "h1": "About Al Ghaffar Travel",
+        "meta_desc": "IT Service WordPress Theme",
+        "body_text": "Learn about our travel company history, client commitment, and team values serving religious and leisure travelers across Pakistan."
+    },
+    {
+        "url": "https://www.alghaffar.com.pk/services/",
+        "title": "Our Services | Al Ghaffar",
+        "h1": "Travel & Tour Services",
+        "meta_desc": "IT Service WordPress Theme",
+        "body_text": "Comprehensive flight bookings, visa assistance, hotel reservations, and destination management from our Karachi agency."
+    },
+    {
+        "url": "https://www.alghaffar.com.pk/trip/",
+        "title": "Holiday Tour Packages | Al Ghaffar",
+        "h1": "Curated Holiday Packages",
+        "meta_desc": "IT Service WordPress Theme",
+        "body_text": "Explore international holiday packages from Karachi. Compare duration and sightseeing options across Sri Lanka, Thailand, and Malaysia."
+    },
+    {
+        "url": "https://www.alghaffar.com.pk/contact/",
+        "title": "Contact Us | Al Ghaffar",
+        "h1": "Get in Touch with Our Team",
+        "meta_desc": "IT Service WordPress Theme",
+        "body_text": "Contact our main travel office in DHA Phase 2 Karachi. Call our customer support helpline or visit our branch for reservations."
+    },
+    {
+        "url": "https://www.alghaffar.com.pk/career/",
+        "title": "Careers & Jobs | Al Ghaffar",
+        "h1": "Join Our Travel Team",
+        "meta_desc": "IT Service WordPress Theme",
+        "body_text": "Explore current career opportunities and job openings in our Karachi office. Grow your travel consulting career with our team."
+    },
+    {
+        "url": "https://www.alghaffar.com.pk/faqs/",
+        "title": "Frequently Asked Questions | Al Ghaffar",
+        "h1": "FAQs & Answers",
+        "meta_desc": "IT Service WordPress Theme",
+        "body_text": "Find answers to common booking questions regarding flight tickets, visa processing times, Umrah requirements, and refund terms."
+    },
+    {
+        "url": "https://www.alghaffar.com.pk/destinations/sri-lanka/",
+        "title": "Sri Lanka Tour Packages | Al Ghaffar",
+        "h1": "Sri Lanka Vacation Packages",
+        "meta_desc": "IT Service WordPress Theme",
+        "body_text": "Discover scenic Sri Lanka holiday packages from Karachi. Explore Colombo, Kandy, and Bentota beaches with personalized quotes."
+    },
+    {
+        "url": "https://www.alghaffar.com.pk/trip/thailand/",
+        "title": "Thailand Holiday Package | Al Ghaffar",
+        "h1": "Thailand Tour Packages",
+        "meta_desc": "IT Service WordPress Theme",
+        "body_text": "Enjoy 6-day Thailand family vacations from Karachi covering Bangkok city sightseeing and Pattaya beaches with inclusive hotel stays."
+    },
+    {
+        "url": "https://www.alghaffar.com.pk/trip/sri-lanka/",
+        "title": "Sri Lanka Travel Deals | Al Ghaffar",
+        "h1": "Sri Lanka Tour Offers",
+        "meta_desc": "IT Service WordPress Theme",
+        "body_text": "5-day Sri Lanka holiday package from Karachi. View full sightseeing itineraries, hotel accommodations, and guided travel details."
+    },
+    {
+        "url": "https://www.alghaffar.com.pk/destinations/thailand/",
+        "title": "Thailand Travel Guide | Al Ghaffar",
+        "h1": "Thailand Guide & Packages",
+        "meta_desc": "IT Service WordPress Theme",
+        "body_text": "Explore Thailand holiday destinations from Karachi. Compare vacation packages, seasonal travel deals, and destination highlights."
+    },
+    {
+        "url": "https://www.alghaffar.com.pk/trip/kuala-lumpur/",
+        "title": "Kuala Lumpur Tours | Al Ghaffar",
+        "h1": "Kuala Lumpur Packages",
+        "meta_desc": "IT Service WordPress Theme",
+        "body_text": "6-day Kuala Lumpur holiday packages from Karachi. Explore Petronas Towers, Genting Highlands, and urban shopping destinations."
+    },
+    {
+        "url": "https://www.alghaffar.com.pk/destinations/kuala-kumpur/",
+        "title": "Kuala Lumpur Destination | Al Ghaffar",
+        "h1": "Kuala Lumpur Guide",
+        "meta_desc": "IT Service WordPress Theme",
+        "body_text": "Complete destination travel guide for Kuala Lumpur Malaysia. Discover top city attractions, transit tips, and vacation planning."
+    }
+]
+
+INVENTED_CLAIM_PATTERNS = [
+    r"\b198[04]\b",
+    r"\b(iata|award-winning|#1 agency|best travel)\b",
+    r"\b(three decades|40 years)\b",
+    r"\$\s*\d+",
+    r"\b(pkr|rs\.?)\s*\d+",
+]
+
+def test_single_brand_resolution_across_alghaffar():
+    """Confirms resolve_site_brand resolves exactly ONE brand across all 13 pages."""
+    brand = resolve_site_brand(AL_GHAFFAR_13_PAGES, "https://www.alghaffar.com.pk/")
+    assert brand == "Al Ghaffar Travel"
+
+def test_rewrites_quality_13_alghaffar_pages():
+    """Tests all 13 Al Ghaffar pages for brand consistency, length bounds,
+    grounding, no dangling endings, and zero invented claims.
+    """
+    brand = resolve_site_brand(AL_GHAFFAR_13_PAGES, "https://www.alghaffar.com.pk/")
+    assert brand == "Al Ghaffar Travel"
+
+    for page in AL_GHAFFAR_13_PAGES:
+        url = page["url"]
+        cur_t = page["title"]
+        h1 = page["h1"]
+        cur_m = page["meta_desc"]
+        page_text = f"{cur_t} {h1} {page['body_text']}"
+
+        new_t = rewrite_natural_title(cur_t, h1, url, page_text=page_text, brand=brand)
+        new_m = rewrite_natural_meta(cur_m, h1, url=url, page_text=page_text, brand=brand)
+
+        # 1. Brand consistency: brand must appear exactly once in title
+        assert brand.lower() in new_t.lower()
+        assert new_t.lower().count(brand.lower()) == 1
+
+        # 2. Title length bounds (50-60 chars) or fail-closed skeleton
+        if "needs manual rewrite" not in new_t.lower():
+            assert 50 <= len(new_t) <= 60, f"Title length {len(new_t)} out of 50-60 on {url}: '{new_t}'"
+
+        # 3. Meta length bounds (120-155 chars) or fail-closed skeleton
+        if "needs manual rewrite" not in new_m.lower():
+            assert 120 <= len(new_m) <= 155, f"Meta length {len(new_m)} out of 120-155 on {url}: '{new_m}'"
+            assert brand.lower() in new_m.lower()
+
+        # 4. Zero dangling stopword endings
+        for text_val in [new_t, new_m]:
+            last_word = re.findall(r"\b[A-Za-z0-9\-]+\b", text_val)[-1].lower()
+            assert last_word not in {"for", "and", "with", "the", "of", "to", "in", "on", "at", "by", "from", "a", "an"}, \
+                f"Dangling ending '{last_word}' in: {text_val}"
+
+        # 5. Zero invented claims
+        combined = f"{new_t} {new_m}".lower()
+        for pat in INVENTED_CLAIM_PATTERNS:
+            match = re.search(pat, combined)
+            assert not match, f"Invented claim '{match.group(0)}' found on {url}"
+
+def test_rewrites_quality_non_travel_fixtures():
+    """Proves generic rewrite engine on Next.js, Shopify, Dental Clinic, and SaaS Landing Page."""
+    fixtures = [
+        ("nextjs-fixture.html", "https://nextjs-saas-platform.example.com/"),
+        ("shopify-fixture.html", "https://shopify-store.example.com/"),
+        ("dental-fixture.html", "https://clifton-dental.example.com/"),
+        ("saas-fixture.html", "https://cloudmetrics.example.com/")
+    ]
+
+    for fname, url in fixtures:
+        fpath = FIXTURES_DIR / "generic" / fname
+        assert fpath.exists(), f"Fixture {fpath} must exist"
+        html = fpath.read_text(encoding="utf-8")
+        soup = BeautifulSoup(html, "html.parser")
+
+        cur_t = soup.title.string.strip() if soup.title else ""
+        meta_tag = soup.find("meta", attrs={"name": "description"})
+        cur_m = meta_tag["content"].strip() if meta_tag and "content" in meta_tag.attrs else ""
+        h1_tag = soup.find("h1")
+        h1 = h1_tag.get_text().strip() if h1_tag else ""
+        body_text = soup.body.get_text().strip() if soup.body else ""
+
+        page = {"url": url, "title": cur_t, "meta_desc": cur_m, "h1": h1, "body_text": body_text}
+        brand = resolve_site_brand([page], url)
+
+        page_text = f"{cur_t} {h1} {body_text}"
+        new_t = rewrite_natural_title(cur_t, h1, url, page_text=page_text, brand=brand)
+        new_m = rewrite_natural_meta(cur_m, h1, url=url, page_text=page_text, brand=brand)
+
+        # Must not contain travel buzzwords on non-travel sites
+        assert "itinerary" not in new_t.lower()
+        assert "itinerary" not in new_m.lower()
+        assert "tour" not in new_t.lower() or "dental" in url or "saas" in url
+
+        # Must pass validator or fail closed cleanly
+        if "needs manual rewrite" not in new_t.lower():
+            assert 50 <= len(new_t) <= 60
+            assert brand.lower() in new_t.lower()
+        if "needs manual rewrite" not in new_m.lower():
+            assert 120 <= len(new_m) <= 155
+            assert brand.lower() in new_m.lower()
+
+def test_validator_fails_on_length_violations():
+    """Validator must strictly reject titles <50 or >60 and metas <120 or >155."""
+    page_text = "Sample company providing reliable web engineering services in London UK."
+    brand = "Acme Corp"
+
+    # Too short title (40 chars)
+    short_t = "Short Title | Acme Corp"
+    valid, reason = validate_rewrite(short_t, page_text, brand, 50, 60, is_title=True)
+    assert not valid
+    assert "below minimum" in reason
+
+    # Too long title (65 chars)
+    long_t = "This Is An Extremely Long Title Tag That Exceeds Sixty Chars | Acme Corp"
+    valid, reason = validate_rewrite(long_t, page_text, brand, 50, 60, is_title=True)
+    assert not valid
+    assert "exceeds maximum" in reason
+
+def test_validator_fails_on_dangling_stopword_endings():
+    """Validator must reject rewrites ending with prepositions or stopwords."""
+    page_text = "Sample company providing reliable web engineering services in London UK."
+    brand = "Acme Corp"
+
+    dangling_meta = "Explore reliable web engineering and development solutions for modern digital infrastructure across London UK with Acme Corp with."
+    valid, reason = validate_rewrite(dangling_meta, page_text, brand, 100, 155, is_title=False)
+    assert not valid
+    assert "Dangling stopword" in reason
+
+def test_validator_fails_on_ungrounded_words():
+    """Validator must reject rewrites where >= 20% content words are invented."""
+    page_text = "Dental clinic offering teeth cleanings and checkups."
+    brand = "Apex Dental"
+
+    invented_meta = "Apex Dental provides automated artificial intelligence quantum cryptography serverless microservices for banking."
+    valid, reason = validate_rewrite(invented_meta, page_text, brand, 100, 155, is_title=False)
+    assert not valid
+    assert "Grounding check failed" in reason
+
+def test_validator_fails_on_banned_marketing_copy():
+    """Validator must reject any rewrite containing the 11 banned marketing buzzwords."""
+    page_text = "Sample page text about services and products."
+    brand = "Acme Corp"
+
+    banned_words = [
+        "verified", "official", "transparent", "dedicated", "custom",
+        "digital growth", "digital agency", "enterprise", "itinerary", "award", "best"
+    ]
+    for b in banned_words:
+        cand = f"Acme Corp delivers {b} solutions for clients across our main regions."
+        valid, reason = validate_rewrite(cand, page_text, brand, 30, 155, is_title=False)
+        assert not valid
+        assert "Banned marketing copy" in reason
+
+def test_generate_alghaffar_b01_table_markdown():
+    """Generates the grounded B-01 table markdown for all 13 Al Ghaffar fixture pages."""
+    brand = resolve_site_brand(AL_GHAFFAR_13_PAGES, "https://www.alghaffar.com.pk/")
+    rows = []
+    for page in AL_GHAFFAR_13_PAGES:
+        url = page["url"]
+        path_label = url.replace("https://www.alghaffar.com.pk", "")
+        if not path_label:
+            path_label = "Home `/`"
+        else:
+            path_label = f"`{path_label}`"
+        cur_t = page["title"]
+        h1 = page["h1"]
+        cur_m = page["meta_desc"]
+        page_text = f"{cur_t} {h1} {page['body_text']}"
+        new_t = rewrite_natural_title(cur_t, h1, url, page_text=page_text, brand=brand)
+        new_m = rewrite_natural_meta(cur_m, h1, url=url, page_text=page_text, brand=brand)
+        rows.append(f"| {path_label} | `{new_t}` ({len(new_t)}) | `{new_m}` ({len(new_m)}) |")
+    
+    table_md = "\n".join([
+        "| Page URL | Recommended SEO Title (50–60 Chars) | Recommended Meta Description (120–155 Chars) |",
+        "|---|---|---|",
+        *rows
+    ])
+    print("\n--- GENERATED B-01 TABLE ---\n" + table_md + "\n----------------------------\n")
+    assert len(rows) == 13
