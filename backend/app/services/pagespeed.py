@@ -1,12 +1,96 @@
 import httpx
 import asyncio
 import random
+import statistics
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from app.core.config import settings
 from app.core.db import DBManager
 
 PSI_API_URL = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+
+def compute_median_psi_results(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Given multiple successful PSI runs for the same URL & strategy,
+    computes the median values for performance_score, lcp_ms, cls, fcp_ms, ttfb_ms.
+    """
+    valid_runs = [r for r in runs if r.get("performance_score") is not None]
+    if not valid_runs:
+        return runs[0] if runs else {}
+    if len(valid_runs) == 1:
+        return valid_runs[0]
+
+    base = dict(valid_runs[0])
+    scores = [r["performance_score"] for r in valid_runs if r.get("performance_score") is not None]
+    lcps = [r["lcp_ms"] for r in valid_runs if r.get("lcp_ms") is not None]
+    clss = [r["cls"] for r in valid_runs if r.get("cls") is not None]
+    fcps = [r["fcp_ms"] for r in valid_runs if r.get("fcp_ms") is not None]
+    ttfbs = [r["ttfb_ms"] for r in valid_runs if r.get("ttfb_ms") is not None]
+
+    base["performance_score"] = int(statistics.median(scores)) if scores else None
+    base["lcp_ms"] = round(statistics.median(lcps), 1) if lcps else None
+    base["cls"] = round(statistics.median(clss), 3) if clss else None
+    base["fcp_ms"] = round(statistics.median(fcps), 1) if fcps else None
+    base["ttfb_ms"] = round(statistics.median(ttfbs), 1) if ttfbs else None
+    base["runs_count"] = len(valid_runs)
+    return base
+
+def get_lcp_subscore(lcp_ms: float, strategy: str = "mobile") -> float:
+    """Estimates the Lighthouse LCP metric score [0.0, 1.0] device-specifically.
+    Mobile: <= 2500ms -> 1.0, >= 8000ms -> 0.0.
+    Desktop: <= 1200ms -> 1.0, >= 4000ms -> 0.0.
+    """
+    if strategy == "desktop":
+        if lcp_ms <= 1200.0:
+            return 1.0
+        elif lcp_ms >= 4000.0:
+            return 0.0
+        else:
+            return max(0.0, min(1.0, 1.0 - (lcp_ms - 1200.0) / (4000.0 - 1200.0)))
+    else:
+        if lcp_ms <= 2500.0:
+            return 1.0
+        elif lcp_ms >= 8000.0:
+            return 0.0
+        else:
+            return max(0.0, min(1.0, 1.0 - (lcp_ms - 2500.0) / (8000.0 - 2500.0)))
+
+def check_metric_consistency(
+    performance_score: Optional[int],
+    lcp_ms: Optional[float],
+    cls: Optional[float],
+    strategy: str = "mobile",
+    psi_lcp_score: Optional[float] = None
+) -> Dict[str, Any]:
+    """Sanity check whether performance score and core metrics are mutually consistent.
+    In Lighthouse scoring curves, LCP has 25% weight. The maximum possible overall
+    score given an LCP sub-score is:
+        max_possible_score = 100 - 25 * (1 - lcp_subscore)
+    Only flag if performance_score > max_possible_score.
+    (e.g., LCP 11.3s has LCP_score ~0.0 -> max_score = 75; a score of 71 is possible and valid).
+    """
+    if performance_score is None:
+        return {"is_consistent": True, "reason": ""}
+
+    if psi_lcp_score is not None:
+        lcp_subscore = psi_lcp_score
+    elif lcp_ms is not None:
+        lcp_subscore = get_lcp_subscore(lcp_ms, strategy=strategy)
+    else:
+        lcp_subscore = None
+
+    if lcp_subscore is not None:
+        max_possible_score = round(100.0 - 25.0 * (1.0 - lcp_subscore))
+        if performance_score > max_possible_score:
+            lcp_desc = f"{lcp_ms/1000:.1f}s" if lcp_ms is not None else f"subscore {lcp_subscore:.2f}"
+            return {
+                "is_consistent": False,
+                "reason": (
+                    f"Performance score of {performance_score} exceeds the theoretical maximum "
+                    f"({max_possible_score}) for {strategy} LCP of {lcp_desc} (Lighthouse weight 25%)."
+                )
+            }
+
+    return {"is_consistent": True, "reason": ""}
 
 async def run_psi_for_url(
     client: httpx.AsyncClient,
@@ -155,8 +239,58 @@ async def run_psi_for_url(
     DBManager.save_psi_result(result)
     return result
 
-async def run_pagespeed_pipeline(job_id: str, target_url: str, ignore_cache: bool = False):
-    """Orchestrates PSI for homepage + up to 4 top inlink pages for mobile and desktop sequentially."""
+async def run_median_psi_for_url(
+    client: httpx.AsyncClient,
+    job_id: str,
+    url: str,
+    strategy: str = "mobile",
+    n_runs: int = 3,
+    ignore_cache: bool = False
+) -> Dict[str, Any]:
+    """Runs PageSpeed Insights N times (N>=3) and aggregates via compute_median_psi_results.
+    If cached and ignore_cache is False, returns cached result.
+    """
+    if not ignore_cache:
+        cached = DBManager.get_psi_cached(url, strategy)
+        if cached:
+            cached["job_id"] = job_id
+            cached["is_cached"] = True
+            cached["cached_measured_at"] = cached.get("fetched_at")
+            DBManager.save_psi_result(cached)
+            return cached
+
+    runs = []
+    for r_idx in range(n_runs):
+        if r_idx > 0:
+            await asyncio.sleep(1.0)
+        single_res = await run_psi_for_url(client, job_id, url, strategy=strategy, ignore_cache=True)
+        if single_res.get("performance_score") is not None:
+            runs.append(single_res)
+        elif single_res.get("error"):
+            runs.append(single_res)
+            break
+
+    if not runs:
+        return {
+            "job_id": job_id, "url": url, "strategy": strategy,
+            "performance_score": None, "error": "No runs completed",
+            "is_cached": False, "cached_measured_at": None,
+            "fetched_at": datetime.now(timezone.utc).isoformat()
+        }
+
+    valid_runs = [r for r in runs if r.get("performance_score") is not None]
+    if valid_runs:
+        median_res = compute_median_psi_results(valid_runs)
+        DBManager.save_psi_result(median_res)
+        return median_res
+    else:
+        DBManager.save_psi_result(runs[0])
+        return runs[0]
+
+async def run_pagespeed_pipeline(job_id: str, target_url: str, ignore_cache: bool = False, n_runs: int = 3):
+    """Orchestrates PSI for homepage + up to 4 top inlink pages for mobile and desktop sequentially,
+    taking the median of N runs (N>=3).
+    """
     DBManager.update_job(job_id, {
         "status": "pagespeed",
         "current_step": "pagespeed"
@@ -184,15 +318,15 @@ async def run_pagespeed_pipeline(job_id: str, target_url: str, ignore_cache: boo
                 # 2 second sequential delay between pages
                 await asyncio.sleep(2.0)
 
-            # Mobile strategy
-            m_res = await run_psi_for_url(client, job_id, url, strategy="mobile", ignore_cache=ignore_cache)
+            # Mobile strategy (median of N runs)
+            m_res = await run_median_psi_for_url(client, job_id, url, strategy="mobile", n_runs=n_runs, ignore_cache=ignore_cache)
             results_status.append(m_res)
 
             # 2 second sequential delay between mobile and desktop calls
             await asyncio.sleep(2.0)
 
-            # Desktop strategy
-            d_res = await run_psi_for_url(client, job_id, url, strategy="desktop", ignore_cache=ignore_cache)
+            # Desktop strategy (median of N runs)
+            d_res = await run_median_psi_for_url(client, job_id, url, strategy="desktop", n_runs=n_runs, ignore_cache=ignore_cache)
             results_status.append(d_res)
 
     success_cnt = sum(1 for r in results_status if r.get("performance_score") is not None)

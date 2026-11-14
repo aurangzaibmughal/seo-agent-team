@@ -261,15 +261,74 @@ module.exports = nextConfig;
 TPL_WORDPRESS_FUNCTIONS_PHP = """<?php
 {{ header }}
 /**
- * Injects SEO Organization & Breadcrumb JSON-LD schemas into wp_head.
- * No external SEO plugin dependency required.
+ * SEO Fixes for WordPress / Elementor Themes:
+ * 1. Self-referencing canonical fallback for custom post types and archives.
+ * 2. Organization & WebSite JSON-LD structured data injection.
  */
+
+// 1. Canonical fallback hook
+add_action('wp_head', function() {
+    if (!has_action('wp_head', 'rel_canonical') && !function_exists('wp_seo_canonical')) {
+        $canonical_url = home_url(add_query_arg([], $GLOBALS['wp']->request ?? ''));
+        echo '<link rel="canonical" href="' . esc_url(trailingslashit($canonical_url)) . '" />' . "\\n";
+    }
+}, 1);
+
+// 2. Organization & WebSite Schema hook
 add_action('wp_head', function() {
     $schema_data = {{ schema_json_raw }};
     $safe_json = str_replace('<', '\\u003c', json_encode($schema_data, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
     echo "\\n<!-- SEO Agent Team Structured Data -->\\n";
     echo '<script type="application/ld+json">' . $safe_json . '</script>' . "\\n";
 }, 5);
+"""
+
+TPL_WORDPRESS_FIX_INSTRUCTIONS = """# SEO Implementation Instructions (WordPress / Elementor)
+
+This fix package was generated deterministically by the SEO Agent Team audit engine.
+Follow these steps to apply all recommended technical and on-page fixes to your WordPress website.
+
+---
+
+## 1. On-Page Titles & Meta Descriptions
+- **File Reference:** `metadata_table.csv`
+- **Application Method:**
+  - **Using Yoast SEO / Rank Math / SEOPress:** Navigate to WP-Admin -> Posts / Pages -> Edit Page. Scroll to the SEO box and copy the `suggested_title` and `suggested_meta` values from `metadata_table.csv`.
+  - **Using Elementor Theme Builder:** Open your Single Post/Page Template or Archive Template in Elementor -> Settings (gear icon bottom left) -> General Settings -> Update Title / Meta Description.
+
+---
+
+## 2. Canonical URLs & Custom Post Types
+- **File Reference:** `functions.php`
+- **Problem Resolved:** Missing canonical tags on custom post types or archives (e.g. `/trip/`).
+- **Application Method:**
+  - Copy the canonical snippet from `functions.php` and append it to your active Child Theme's `functions.php` (WP-Admin -> Appearance -> Theme File Editor -> `functions.php`).
+  - *Alternatively*, if using Rank Math or Yoast, navigate to SEO -> Titles & Meta -> Post Types / Custom Post Types, and enable Canonical URL inclusion.
+
+---
+
+## 3. Structured Data (Schema.org)
+- **File Reference:** `schema-organization.jsonld` & `functions.php`
+- **Application Method:**
+  - The `functions.php` file contains an automated hook (`add_action('wp_head', ...)`) that outputs clean Organization and WebSite schema directly into `<head>`.
+  - If you prefer a plugin, copy the raw JSON from `schema-organization.jsonld` into **WPCode** / **Insert Headers and Footers** as a Header Script.
+
+---
+
+## 4. 301 Permanent Redirects
+- **File Reference:** `.htaccess` (if present)
+- **Application Method:**
+  - Access your server via FTP or cPanel File Manager and edit `.htaccess` in your WordPress root directory.
+  - Paste the redirect directives immediately before the `# BEGIN WordPress` block.
+  - *Or install the free **Redirection** plugin* (Tools -> Redirection) and import the redirects.
+
+---
+
+## 5. XML Sitemap & Robots.txt
+- **File Reference:** `sitemap.xml`, `robots.txt`
+- **Application Method:**
+  - Ensure your XML sitemap URL is submitted to Google Search Console under Indexing -> Sitemaps.
+  - Verify that `robots.txt` references your active sitemap URL.
 """
 
 TPL_WORDPRESS_ROBOTS_TXT = """{{ header }}
@@ -345,9 +404,9 @@ Sitemap: {{ sitemap_url }}
 """
 
 TPL_LLMS_TXT = """# {{ site_name }}
-
+{% if site_summary %}
 > {{ site_summary }}
-
+{% endif %}
 ## Key Resources
 {% for link in curated_links %}
 - [{{ link.title }}]({{ link.url }}): {{ link.description }}
@@ -491,7 +550,7 @@ class CodeTemplateEngine:
         return t.render(header=header, sitemap_url=sitemap_url, disallow_paths=disallow_paths or [])
 
     @classmethod
-    def render_llms_txt(cls, site_name: str, site_summary: str, base_url: str, curated_links: List[Dict[str, str]], is_demo: bool = False) -> str:
+    def render_llms_txt(cls, site_name: str, site_summary: Optional[str], base_url: str, curated_links: List[Dict[str, str]], is_demo: bool = False) -> str:
         # LLMS.TXT standard strictly requires # H1 as the very first line - no header comments
         clean_links = []
         for lk in curated_links:
@@ -500,7 +559,7 @@ class CodeTemplateEngine:
                 "url": lk.get("url", "").strip(),
                 "description": truncate_at_word_boundary(lk.get("description", ""), 140)
             })
-        clean_summary = truncate_at_word_boundary(site_summary, 200)
+        clean_summary = truncate_at_word_boundary(site_summary, 200) if site_summary else ""
 
         t = Template(TPL_LLMS_TXT)
         return t.render(
@@ -534,6 +593,11 @@ class CodeTemplateEngine:
                 "needs human review"
             ])
         return output.getvalue()
+
+    @classmethod
+    def render_wordpress_instructions(cls, is_demo: bool = False) -> str:
+        t = Template(TPL_WORDPRESS_FIX_INSTRUCTIONS)
+        return t.render()
 
     @classmethod
     def render_wordpress_functions_php(cls, schema_dict: Dict[str, Any], is_demo: bool = False) -> str:

@@ -1,4 +1,5 @@
 import ast
+from pathlib import Path
 import socket
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -11,13 +12,9 @@ from app.core.security import (
     safe_fetch_url,
     SSRFSecurityError,
     hash_password,
-    verify_password,
     create_session_token,
-    verify_session_token,
-    job_creation_limiter,
     login_rate_limiter,
     get_client_ip,
-    is_ip_prohibited,
 )
 
 client = TestClient(app)
@@ -200,8 +197,8 @@ async def test_ssrf_dns_rebinding_connect_time_guard():
 def test_ssrf_allows_safe_public_urls():
     """Verify valid public HTTPS/HTTP URLs pass validation."""
     valid_urls = [
-        "https://webspire-agency.vercel.app/",
-        "https://webspire-agency.vercel.app/services",
+        "https://demo-site.example.com/",
+        "https://demo-site.example.com/services",
         "https://example.com",
         "http://example.com",
     ]
@@ -216,15 +213,16 @@ def test_ssrf_allows_safe_public_urls():
 
 def test_static_crawler_uses_safe_fetch_url():
     """Statically verifies that crawler modules never use raw client.get/httpx.get outside safe_fetch_url."""
+    base_app = Path(__file__).parent.parent / "app"
     crawler_files = [
-        "app/crawler/engine.py",
-        "app/crawler/competitor_crawler.py"
+        base_app / "crawler" / "engine.py",
+        base_app / "crawler" / "competitor_crawler.py"
     ]
     violations = []
 
     for filepath in crawler_files:
         with open(filepath, "r", encoding="utf-8") as f:
-            tree = ast.parse(f.read(), filename=filepath)
+            tree = ast.parse(f.read(), filename=str(filepath))
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
@@ -328,7 +326,7 @@ def test_demo_mode_disabled_in_production():
         token = create_session_token({"role": "admin"})
         res = client.post(
             "/api/jobs",
-            json={"url": "https://webspire-agency.vercel.app/", "max_pages": 10, "is_demo": True},
+            json={"url": "https://demo-site.example.com/", "max_pages": 10, "is_demo": True},
             headers={"Authorization": f"Bearer {token}"}
         )
         assert res.status_code == 400

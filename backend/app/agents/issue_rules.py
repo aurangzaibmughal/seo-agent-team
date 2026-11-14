@@ -4,6 +4,22 @@ import difflib
 import re
 from urllib.parse import urlparse
 from app.core.classification import classify_page_type, is_admin_page
+from app.crawler.url_utils import canonical_url_key, urls_compare_equal
+
+PLACEHOLDER_PATTERNS = [
+    r"it service wordpress theme",
+    r"just another wordpress site",
+    r"lorem ipsum",
+    r"default description",
+    r"your tagline here",
+    r"sample page",
+    r"coming soon",
+    r"under construction",
+    r"my wordpress blog",
+    r"elementor wordpress theme",
+    r"site description",
+    r"insert description here",
+]
 
 def infer_brand_name(crawl_pages: List[Dict[str, Any]], brand_hint: Optional[str] = None) -> Optional[str]:
     """Infers the brand or project name from titles or URL domain."""
@@ -75,6 +91,8 @@ def detect_issues_from_data(
     brand_name: Optional[str] = None,
     sitemap_entries: Optional[List[Dict[str, Any]]] = None,
     sitemap_urls: Optional[Any] = None,
+    sitemap_status: Optional[str] = None,
+    robots_found: Optional[bool] = None,
 ) -> List[Dict[str, Any]]:
     """Deterministic, rule-based SEO issue detector (Plain Python, No LLM)."""
     candidates: List[Dict[str, Any]] = []
@@ -175,35 +193,264 @@ def detect_issues_from_data(
                             "evidence": [{"table": "crawl_pages", "id": pid, "field": "title", "value": title}],
                         })
 
-            # Missing Meta Description
-            if not meta_desc or len(meta_desc.strip()) == 0:
+            # Meta Description Rules (A-03: Placeholder, Short, Long, Missing)
+            clean_meta = meta_desc.strip() if meta_desc else ""
+            if not clean_meta:
                 candidates.append({
                     "type": "missing_meta_description",
                     "urls": [url],
                     "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": None}],
                 })
             else:
-                meta_len = len(meta_desc.strip())
-                if 161 <= meta_len <= 170:
+                clean_meta_lower = clean_meta.lower()
+                is_placeholder = any(re.search(pat, clean_meta_lower) for pat in PLACEHOLDER_PATTERNS)
+
+                # Heuristic relevance check
+                if not is_placeholder and len(clean_meta.split()) >= 3:
+                    page_terms = set(re.findall(r"[a-z0-9]+", f"{page.get('title', '')} {page.get('h1', '')}".lower()))
+                    meta_terms = set(re.findall(r"[a-z0-9]+", clean_meta_lower)) - {"the", "a", "an", "and", "or", "in", "on", "at", "to", "for", "with", "of", "is"}
+                    if page_terms and meta_terms and not (meta_terms & page_terms) and len(clean_meta) < 60:
+                        is_placeholder = True
+
+                if is_placeholder:
+                    candidates.append({
+                        "type": "meta_description_placeholder",
+                        "urls": [url],
+                        "severity": "high",
+                        "impact": f"Page displays generic theme or placeholder text ('{clean_meta}') instead of business copy in SERPs.",
+                        "fix_hint": "Replace theme placeholder with a tailored, business-relevant meta description (120–155 chars).",
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": clean_meta}],
+                    })
+
+                meta_len = len(clean_meta)
+                if meta_len < 70:
+                    candidates.append({
+                        "type": "meta_description_too_short",
+                        "urls": [url],
+                        "severity": "medium",
+                        "impact": f"Meta description is only {meta_len} characters (recommended: 120–155). Short descriptions fail to capture SERP CTR.",
+                        "fix_hint": "Expand meta description to 120–155 characters with service details and a clear call to action.",
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": f"{meta_len} chars: {clean_meta}"}],
+                    })
+                elif 161 <= meta_len <= 170:
                     candidates.append({
                         "type": "meta_borderline",
                         "urls": [url],
-                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": meta_desc}],
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": clean_meta}],
                     })
                 elif meta_len > 170:
                     candidates.append({
                         "type": "meta_too_long",
                         "urls": [url],
-                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": meta_desc}],
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "meta_desc", "value": clean_meta}],
                     })
-                meta_to_pages[meta_desc.strip().lower()].append(page)
+                meta_to_pages[clean_meta_lower].append(page)
 
-            # Missing H1
+            # Missing H1 & Multiple H1
+            h1_list = page.get("h1_list") or ([h1] if h1 else [])
             if not h1 or len(h1.strip()) == 0:
                 candidates.append({
                     "type": "missing_h1",
                     "urls": [url],
                     "evidence": [{"table": "crawl_pages", "id": pid, "field": "h1", "value": None}],
+                })
+            elif len(h1_list) > 1:
+                candidates.append({
+                    "type": "multiple_h1",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "h1_list", "count": len(h1_list), "value": h1_list}],
+                })
+
+            # Image Alt attributes
+            missing_alts = page.get("images_missing_alt") or []
+            if missing_alts:
+                candidates.append({
+                    "type": "missing_image_alt",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "images_missing_alt", "count": len(missing_alts), "samples": missing_alts[:5]}],
+                })
+
+            # Autoplay video without mute
+            unmuted_vids = page.get("unmuted_autoplay_videos") or []
+            if unmuted_vids:
+                candidates.append({
+                    "type": "unmuted_autoplay_video",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "unmuted_autoplay_videos", "value": unmuted_vids}],
+                })
+
+            # Autoplay or heavy video above the fold
+            vids_above_fold = page.get("videos_above_fold") or []
+            if vids_above_fold:
+                candidates.append({
+                    "type": "autoplay_video_above_fold",
+                    "urls": [url],
+                    "severity": "medium",
+                    "impact": "Autoplay or heavy uncompressed video above the fold delays LCP and degrades mobile performance.",
+                    "fix_hint": "Replace above-the-fold autoplay video with a lightweight WebP poster image and lazy-load video.",
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "videos_above_fold", "value": vids_above_fold}],
+                })
+
+            # Empty / hash links on legal or policy anchors
+            empty_links = page.get("empty_legal_links") or []
+            if empty_links:
+                candidates.append({
+                    "type": "broken_hash_link",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "empty_legal_links", "value": empty_links}],
+                })
+
+            # Schema.org structured data presence
+            if status == 200 and page.get("indexable") and not page.get("has_schema"):
+                candidates.append({
+                    "type": "missing_schema",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "has_schema", "value": False}],
+                })
+
+            # Image dimensions (causes Cumulative Layout Shift / CLS)
+            missing_dims = page.get("images_missing_dimensions") or []
+            if missing_dims:
+                candidates.append({
+                    "type": "missing_image_dimensions",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "images_missing_dimensions", "count": len(missing_dims), "samples": missing_dims[:5]}],
+                })
+
+            # Non-modern image formats (legacy PNG/JPG instead of WebP/AVIF)
+            legacy_imgs = page.get("images_non_modern") or []
+            if legacy_imgs:
+                candidates.append({
+                    "type": "non_modern_image_format",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "images_non_modern", "count": len(legacy_imgs), "samples": legacy_imgs[:5]}],
+                })
+
+            # Open Graph social tags
+            if status == 200 and page.get("indexable") and not page.get("has_og"):
+                candidates.append({
+                    "type": "missing_open_graph",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "has_og", "value": False}],
+                })
+
+            # Twitter Card meta tags
+            if status == 200 and page.get("indexable") and not page.get("has_twitter_card"):
+                candidates.append({
+                    "type": "missing_twitter_card",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "has_twitter_card", "value": False}],
+                })
+
+            # Breadcrumbs on subpages
+            path_depth = len([s for s in urlparse(url).path.strip("/").split("/") if s])
+            path_slugs = [s.lower() for s in urlparse(url).path.strip("/").split("/") if s]
+            if status == 200 and page.get("indexable") and path_depth >= 1 and not page.get("has_breadcrumbs"):
+                candidates.append({
+                    "type": "missing_breadcrumbs",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "has_breadcrumbs", "value": False}],
+                })
+            elif status == 200 and page.get("breadcrumb_trail"):
+                bc_trail = [c.lower() for c in page["breadcrumb_trail"]]
+                if path_depth == 1 and len(bc_trail) >= 2:
+                    last_crumb = bc_trail[-1]
+                    current_slug = path_slugs[0].replace("-", " ")
+                    if current_slug not in last_crumb and last_crumb not in ("home", current_slug, "trips", "trip", "packages", "services", "tours", "blog"):
+                        candidates.append({
+                            "type": "mismatched_breadcrumb",
+                            "urls": [url],
+                            "severity": "medium",
+                            "impact": f"Breadcrumb trail ({' > '.join(page['breadcrumb_trail'])}) references an unrelated child page on a parent archive page.",
+                            "fix_hint": "Update the archive breadcrumb template so the breadcrumb displays the archive name rather than an unrelated child page.",
+                            "evidence": [{"table": "crawl_pages", "id": pid, "field": "breadcrumb_trail", "value": page["breadcrumb_trail"]}],
+                        })
+
+            # Legal / trust links
+            if status == 200 and not page.get("has_privacy_link") and not page.get("has_terms_link"):
+                candidates.append({
+                    "type": "missing_legal_pages",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "legal_links", "value": "No Privacy Policy or Terms links discovered"}],
+                })
+
+            # Noindex vs Canonical conflict
+            if index_status in ("noindex_meta", "noindex_header") and canonical:
+                candidates.append({
+                    "type": "noindex_canonical_conflict",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "noindex_canonical", "value": f"Page is noindex but declares canonical: {canonical}"}],
+                })
+
+            # Insecure HTTP URL (Redirect hygiene)
+            if url.startswith("http://"):
+                candidates.append({
+                    "type": "insecure_http_url",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "url", "value": "URL served over insecure HTTP protocol"}],
+                })
+
+            # www vs non-www redirect / canonical hygiene
+            if canonical and url:
+                u_host = (urlparse(url).netloc or "").lower().split(":")[0]
+                c_host = (urlparse(canonical).netloc or "").lower().split(":")[0]
+                if u_host and c_host and u_host != c_host:
+                    u_is_www = u_host.startswith("www.")
+                    c_is_www = c_host.startswith("www.")
+                    if u_is_www != c_is_www and u_host.replace("www.", "") == c_host.replace("www.", ""):
+                        candidates.append({
+                            "type": "www_redirect_inconsistency",
+                            "urls": [url],
+                            "severity": "medium",
+                            "impact": f"Page served on {u_host} specifies canonical on {c_host}, causing mixed domain indexing and splitting link equity.",
+                            "fix_hint": "Implement a 301 redirect rule to normalize all traffic to either www or non-www consistently.",
+                            "evidence": [{"table": "crawl_pages", "id": pid, "field": "canonical", "value": f"URL {url} vs canonical {canonical}"}],
+                        })
+
+            # Trailing slash redirect / canonical hygiene
+            if canonical and url:
+                u_p = urlparse(url)
+                c_p = urlparse(canonical)
+                if u_p.path and c_p.path and u_p.path != "/" and c_p.path != "/":
+                    if (u_p.path.endswith("/") != c_p.path.endswith("/")) and (u_p.path.rstrip("/") == c_p.path.rstrip("/")):
+                        candidates.append({
+                            "type": "trailing_slash_inconsistency",
+                            "urls": [url],
+                            "evidence": [{"table": "crawl_pages", "id": pid, "field": "canonical", "value": f"URL {url} and canonical {canonical} have mismatched trailing slash"}],
+                        })
+
+            # Content-QA Advisory checks (marked is_advisory=True)
+            TYPO_MAP = {
+                "kuala-kumpur": "kuala-lumpur",
+                "azerbajan": "azerbaijan",
+                "morroco": "morocco",
+                "landon": "london"
+            }
+            for typo, correction in TYPO_MAP.items():
+                if typo in url.lower():
+                    candidates.append({
+                        "type": "slug_typo",
+                        "urls": [url],
+                        "is_advisory": True,
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "url", "found": typo, "suggested": correction}],
+                    })
+
+            page_full_text = f"{title or ''} {h1 or ''} {page.get('body_text', '')}".lower()
+            for typo, correction in TYPO_MAP.items():
+                if re.search(r"\b" + re.escape(typo) + r"\b", page_full_text):
+                    candidates.append({
+                        "type": "content_typo",
+                        "urls": [url],
+                        "is_advisory": True,
+                        "evidence": [{"table": "crawl_pages", "id": pid, "field": "body_text", "found": typo, "suggested": correction}],
+                    })
+
+            if "pkr $" in page_full_text or "$ pkr" in page_full_text or re.search(r"\$\s*\d+.*(?:pkr|rupee)", page_full_text):
+                candidates.append({
+                    "type": "currency_anomaly",
+                    "urls": [url],
+                    "is_advisory": True,
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "body_text", "value": "Conflicting currency symbols detected ($ with PKR)"}],
                 })
 
             # Canonical checks
@@ -277,25 +524,27 @@ def detect_issues_from_data(
                     "urls": [p["url"] for p in dom_pages],
                     "target_url": dominant_target,
                     "target_canonical": dominant_target,
-                    "evidence": [{"table": "crawl_pages", "id": p["id"], "field": "canonical", "value": p.get("canonical")} for p in dom_pages],
+                    "evidence": [{"table": "crawl_pages", "id": p.get("id"), "field": "canonical", "value": p.get("canonical")} for p in dom_pages],
                 })
 
-    # Duplicate Titles
+    # Duplicate Titles (A-05: Grouped with exact shared text)
     for t_text, plist in title_to_pages.items():
         if len(plist) > 1:
             candidates.append({
                 "type": "duplicate_title",
                 "urls": [p["url"] for p in plist],
-                "evidence": [{"table": "crawl_pages", "id": p["id"], "field": "title", "value": p.get("title")} for p in plist],
+                "group_key": t_text,
+                "evidence": [{"table": "crawl_pages", "id": p.get("id"), "field": "title", "value": p.get("title")} for p in plist],
             })
 
-    # Duplicate Meta Descriptions
+    # Duplicate Meta Descriptions (A-05: Grouped with exact shared text)
     for m_text, plist in meta_to_pages.items():
         if len(plist) > 1:
             candidates.append({
                 "type": "duplicate_meta_description",
                 "urls": [p["url"] for p in plist],
-                "evidence": [{"table": "crawl_pages", "id": p["id"], "field": "meta_desc", "value": p.get("meta_desc")} for p in plist],
+                "group_key": m_text,
+                "evidence": [{"table": "crawl_pages", "id": p.get("id"), "field": "meta_desc", "value": p.get("meta_desc")} for p in plist],
             })
 
     # 2. PageSpeed Insights Rules
@@ -315,21 +564,51 @@ def detect_issues_from_data(
                 "evidence": [{"table": "psi_results", "id": psi_id, "field": "performance_score", "value": score}],
             })
 
-        if lcp is not None and lcp > 2500:
-            speed_issues_found = True
-            candidates.append({
-                "type": "slow_lcp",
-                "urls": [p_url],
-                "evidence": [{"table": "psi_results", "id": psi_id, "field": "lcp_ms", "value": lcp}],
-            })
+        # LCP rules (A-11: 3-band)
+        if lcp is not None:
+            if lcp > 4000:
+                speed_issues_found = True
+                candidates.append({
+                    "type": "slow_lcp",
+                    "urls": [p_url],
+                    "severity": "high",
+                    "impact": f"Largest Contentful Paint is {lcp/1000:.1f}s (poor, Google threshold > 4.0s), severely penalizing mobile organic rankings.",
+                    "fix_hint": "Preload hero images, remove autoplaying video above fold, and optimize server TTFB.",
+                    "evidence": [{"table": "psi_results", "id": psi_id, "field": "lcp_ms", "value": lcp}],
+                })
+            elif lcp > 2500:
+                speed_issues_found = True
+                candidates.append({
+                    "type": "lcp_needs_improvement",
+                    "urls": [p_url],
+                    "severity": "medium",
+                    "impact": f"Largest Contentful Paint is {lcp/1000:.1f}s (needs improvement, range 2.5s–4.0s).",
+                    "fix_hint": "Compress images to WebP/AVIF and optimize critical CSS.",
+                    "evidence": [{"table": "psi_results", "id": psi_id, "field": "lcp_ms", "value": lcp}],
+                })
 
-        if cls_val is not None and cls_val > 0.1:
-            speed_issues_found = True
-            candidates.append({
-                "type": "poor_cls",
-                "urls": [p_url],
-                "evidence": [{"table": "psi_results", "id": psi_id, "field": "cls", "value": cls_val}],
-            })
+        # CLS rules (A-11: 3-band)
+        if cls_val is not None:
+            if cls_val > 0.25:
+                speed_issues_found = True
+                candidates.append({
+                    "type": "poor_cls",
+                    "urls": [p_url],
+                    "severity": "high",
+                    "impact": f"Cumulative Layout Shift is {cls_val} (poor, Google threshold > 0.25), causing severe visual instability.",
+                    "fix_hint": "Add explicit width and height attributes to all images, sliders and embed containers.",
+                    "evidence": [{"table": "psi_results", "id": psi_id, "field": "cls", "value": cls_val}],
+                })
+            elif cls_val > 0.10:
+                speed_issues_found = True
+                candidates.append({
+                    "type": "cls_needs_improvement",
+                    "urls": [p_url],
+                    "severity": "low",
+                    "impact": f"Cumulative Layout Shift is {cls_val} (needs improvement, range 0.10–0.25).",
+                    "fix_hint": "Reserve aspect ratio space for dynamic widgets and web font loading.",
+                    "evidence": [{"table": "psi_results", "id": psi_id, "field": "cls", "value": cls_val}],
+                })
 
     if psi_results and not speed_issues_found:
         print("PSI ran, no speed issues found")
@@ -359,47 +638,93 @@ def detect_issues_from_data(
                 ],
             })
 
-    # Rule 2: crawled_page_missing_from_sitemap
-    known_sitemap_urls = set()
-    if sitemap_entries:
-        for e in sitemap_entries:
-            u_val = e.get("url") or ""
-            if u_val:
-                known_sitemap_urls.add(u_val.rstrip("/"))
-    if sitemap_urls:
-        for su in sitemap_urls:
-            if su:
-                known_sitemap_urls.add(su.rstrip("/"))
+    # Rule 2: Sitemap Discovery, Unreadable and Missing Checks (A-02)
+    if sitemap_status == "missing":
+        candidates.append({
+            "type": "sitemap_missing",
+            "urls": [crawl_pages[0].get("url")] if crawl_pages else [],
+            "severity": "medium",
+            "impact": "Search engines cannot efficiently discover all indexable pages because no XML sitemap was found in robots.txt or standard paths.",
+            "fix_hint": "Generate an XML sitemap and reference it in robots.txt via 'Sitemap: https://domain/sitemap.xml'.",
+            "evidence": [{
+                "table": "sitemap.xml",
+                "id": "sitemap",
+                "field": "status",
+                "value": "missing"
+            }]
+        })
+    elif sitemap_status == "unreadable":
+        candidates.append({
+            "type": "sitemap_unreadable",
+            "urls": [crawl_pages[0].get("url")] if crawl_pages else [],
+            "severity": "medium",
+            "impact": "XML sitemap returned HTTP 200 but contains invalid or malformed XML syntax, preventing search engines from parsing it.",
+            "fix_hint": "Validate XML syntax against the sitemaps.org schema and ensure all special characters in URLs are properly escaped.",
+            "evidence": [{
+                "table": "sitemap.xml",
+                "id": "sitemap",
+                "field": "status",
+                "value": "unreadable"
+            }]
+        })
+    else:
+        # Sitemaps found -> perform safe diff using canonical_url_key
+        known_sitemap_keys = set()
+        if sitemap_entries:
+            for e in sitemap_entries:
+                u_val = e.get("url") or ""
+                if u_val:
+                    known_sitemap_keys.add(canonical_url_key(u_val))
+        if sitemap_urls:
+            for su in sitemap_urls:
+                if su:
+                    known_sitemap_keys.add(canonical_url_key(su))
 
-    if known_sitemap_urls:
-        missing_crawled_pages = []
-        for p in crawl_pages:
-            if p.get("status_code") != 200:
-                continue
-            if not p.get("indexable"):
-                continue
-            canonical = p.get("canonical")
-            p_url = p.get("url", "")
-            if canonical and canonical.rstrip("/") != p_url.rstrip("/"):
-                continue
-            if p_url.rstrip("/") not in known_sitemap_urls:
-                missing_crawled_pages.append(p)
+        if known_sitemap_keys:
+            missing_crawled_pages = []
+            for p in crawl_pages:
+                if p.get("status_code") != 200:
+                    continue
+                if not p.get("indexable"):
+                    continue
+                canonical = p.get("canonical")
+                p_url = p.get("url", "")
+                if canonical and not urls_compare_equal(canonical, p_url):
+                    continue
+                if canonical_url_key(p_url) not in known_sitemap_keys:
+                    missing_crawled_pages.append(p)
 
-        if missing_crawled_pages:
-            candidates.append({
-                "type": "crawled_page_missing_from_sitemap",
-                "urls": [p["url"] for p in missing_crawled_pages],
-                "severity": "medium",
-                "evidence": [
-                    {
-                        "table": "crawl_pages",
-                        "id": p.get("id"),
-                        "field": "url",
-                        "value": p.get("url"),
-                    }
-                    for p in missing_crawled_pages
-                ],
-            })
+            if missing_crawled_pages:
+                candidates.append({
+                    "type": "crawled_page_missing_from_sitemap",
+                    "urls": [p["url"] for p in missing_crawled_pages],
+                    "severity": "medium",
+                    "evidence": [
+                        {
+                            "table": "crawl_pages",
+                            "id": p.get("id"),
+                            "field": "url",
+                            "value": p.get("url"),
+                        }
+                        for p in missing_crawled_pages
+                    ],
+                })
+
+    # Robots.txt Missing check
+    if robots_found is False:
+        candidates.append({
+            "type": "missing_robots_txt",
+            "urls": [crawl_pages[0].get("url")] if crawl_pages else [],
+            "severity": "medium",
+            "impact": "No robots.txt file was found at the site root, preventing search crawlers from discovering crawl directives and sitemap locations.",
+            "fix_hint": "Deploy a valid robots.txt at your domain root with User-agent and Sitemap directives.",
+            "evidence": [{
+                "table": "sitemap.xml",
+                "id": "robots.txt",
+                "field": "status",
+                "value": "missing"
+            }]
+        })
 
     # Assign stable candidate IDs (C-001, C-002, ...)
     for idx, c in enumerate(candidates, start=1):

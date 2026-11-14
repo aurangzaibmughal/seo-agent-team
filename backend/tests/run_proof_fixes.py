@@ -3,12 +3,11 @@ import os
 import sys
 import time
 import uuid
-import re
-from typing import Dict, Any, List, Tuple
+from typing import List, Tuple
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.core.db import DBManager, get_sqlite_conn
+from app.core.db import DBManager
 from app.models.agent_schemas import StrategyTask, StrategyTaskSourceRef
 from app.agents.strategist_agent import deduplicate_strategy_tasks
 from app.agents.content_agent import (
@@ -17,8 +16,7 @@ from app.agents.content_agent import (
     ContentAgent,
     STOPWORDS_AND_VERBS_TRAILING
 )
-from app.crawler.engine import AsyncCrawler, is_potential_html_url
-from app.crawler.parser import normalize_url, parse_html_page
+from app.crawler.engine import AsyncCrawler
 from app.services.pagespeed import run_psi_for_url
 import httpx
 
@@ -208,11 +206,11 @@ async def run_all_proofs():
     print("-" * 78)
 
     homepage_crawl = {
-        "url": "https://webspire.agency/",
+        "url": "https://agency.example/",
         "status_code": 200,
-        "title": "WebSpire | Digital Agency",
+        "title": "Agency Demo | Digital Agency",
         "h1": "Next-Gen Web Design Agency",
-        "meta_desc": "WebSpire builds fast websites with Next.js, bespoke UI/UX, and AI search optimization for modern business growth.", # < 160 or > 160
+        "meta_desc": "Agency Demo builds fast websites with Next.js, bespoke UI/UX, and AI search optimization for modern business growth.", # < 160 or > 160
         "links_out": 10,
         "inlinks_count": 5,
         "content_type": "text/html",
@@ -221,9 +219,9 @@ async def run_all_proofs():
 
     # Simulate rewrite generation where current meta needs refinement/expansion
     short_homepage_crawl = {
-        "url": "https://webspire.agency/",
+        "url": "https://agency.example/",
         "status_code": 200,
-        "title": "WebSpire", # Short title -> needs rewrite
+        "title": "Agency Demo", # Short title -> needs rewrite
         "h1": "Custom Web Solutions",
         "meta_desc": "Short agency meta with AI search optimization.", # Short meta (46 chars) -> needs rewrite
         "links_out": 5,
@@ -332,7 +330,7 @@ async def run_all_proofs():
     # -------------------------------------------------------------------------
     # PROOF 6: "PSI ran, no speed issues found"
     # -------------------------------------------------------------------------
-    print(f"\n[6] PSI NO SPEED ISSUES NOTIFICATION")
+    print("\n[6] PSI NO SPEED ISSUES NOTIFICATION")
     print("-" * 78)
     # When all scores >= 90:
     results_perfect = [

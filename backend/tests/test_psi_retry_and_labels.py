@@ -1,22 +1,16 @@
 import pytest
 import asyncio
 import os
-import csv
 import openpyxl
-from reportlab.pdfgen import canvas
 import httpx
 
 from app.core.db import DBManager
 from app.services.pagespeed import run_psi_for_url, run_pagespeed_pipeline
 from app.services.reporter import ReportExporter
 from app.agents.content_agent import (
-    clean_anchor_text,
-    extract_candidate_anchor,
     is_standalone_meaningful_phrase,
     compute_internal_link_suggestions,
-    rewrite_natural_meta,
-    fix_term_capitalization,
-    ContentAgent
+    rewrite_natural_meta
 )
 from app.models.agent_schemas import OnPageRewrite
 
@@ -82,7 +76,6 @@ async def test_psi_status_set_to_partial_with_url_and_reason(monkeypatch):
     })
 
     # Run pipeline with transport returning FAILED_DOCUMENT_REQUEST
-    import app.services.pagespeed as psi_mod
     orig_client = httpx.AsyncClient
 
     def get_test_client(*args, **kwargs):
@@ -155,7 +148,7 @@ def test_rewrites_marked_needs_human_review_and_preserves_ai_search_opt():
     and avoid keyword stuffing.
     """
     real_meta = (
-        "WebSpire is Pakistan's premier web agency engineering custom Next.js websites, "
+        "AcmeSite is Pakistan's premier web agency engineering custom Next.js websites, "
         "e-commerce stores, UI/UX design, and AI search optimization for clients in Pakistan, UK, USA & UAE."
     )
     assert len(real_meta) == 178
@@ -165,7 +158,7 @@ def test_rewrites_marked_needs_human_review_and_preserves_ai_search_opt():
         h1="We Build Modern Websites",
         curr_markets={"pakistan", "uk", "usa", "uae"},
         curr_services={"next.js", "e-commerce", "ui/ux", "ai search optimization"},
-        url="https://webspire-agency.vercel.app/"
+        url="https://acmesite-agency.example.com/"
     )
 
     # 1. Length within Google 155-158 limit
@@ -186,9 +179,9 @@ def test_rewrites_marked_needs_human_review_and_preserves_ai_search_opt():
 
     # 4. Check schema default status
     rw = OnPageRewrite(
-        url="https://webspire-agency.vercel.app/",
-        current_title="WebSpire – Ideas to Impact | Pakistan's Trusted Digital & Web Agency",
-        suggested_title="WebSpire | Pakistan's Trusted Digital & Web Agency",
+        url="https://acmesite-agency.example.com/",
+        current_title="AcmeSite – Ideas to Impact | Pakistan's Trusted Digital & Web Agency",
+        suggested_title="AcmeSite | Pakistan's Trusted Digital & Web Agency",
         current_meta=real_meta,
         suggested_meta=rewritten
     )

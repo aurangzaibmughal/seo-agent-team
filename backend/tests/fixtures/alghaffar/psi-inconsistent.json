@@ -1,0 +1,29 @@
+{
+  "lighthouseResult": {
+    "lighthouseVersion": "11.4.0",
+    "fetchTime": "2026-11-13T07:55:00.000Z",
+    "categories": {
+      "performance": {
+        "score": 0.71
+      }
+    },
+    "audits": {
+      "largest-contentful-paint": {
+        "numericValue": 11330.0,
+        "displayValue": "11.3 s"
+      },
+      "cumulative-layout-shift": {
+        "numericValue": 0.399,
+        "displayValue": "0.399"
+      },
+      "first-contentful-paint": {
+        "numericValue": 2100.0,
+        "displayValue": "2.1 s"
+      },
+      "server-response-time": {
+        "numericValue": 25.0,
+        "displayValue": "25 ms"
+      }
+    }
+  }
+}

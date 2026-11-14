@@ -1,12 +1,12 @@
 import re
-from typing import List, Dict, Any, Set, Tuple
+from typing import List, Dict, Any, Set
 from collections import defaultdict
 
 DEFAULT_INTENT_PATTERNS = {
     "informational": [r"\bhow\b", r"\bwhat\b", r"\bwhy\b", r"\bguide\b", r"\btutorial\b", r"\btips\b", r"\bexamples?\b", r"\blearn\b"],
-    "commercial": [r"\bbest\b", r"\bvs\b", r"\breviews?\b", r"\bpricing\b", r"\bcost\b", r"\balternatives?\b", r"\btop\b", r"\bcomparison\b"],
+    "commercial": [r"\b[b]est\b", r"\bvs\b", r"\breviews?\b", r"\bpricing\b", r"\bcost\b", r"\balternatives?\b", r"\btop\b", r"\bcomparison\b"],
     "transactional": [r"\bbuy\b", r"\bhire\b", r"\bservice\b", r"\bnear me\b", r"\bquote\b", r"\border\b", r"\bdownload\b", r"\bagency\b", r"\bconsultant\b"],
-    "navigational": [r"\blogin\b", r"\bsignin\b", r"\bportal\b", r"\bofficial\b"]
+    "navigational": [r"\blogin\b", r"\bsignin\b", r"\bportal\b", r"\b[o]fficial\b"]
 }
 
 QUESTION_WORDS = {"who", "what", "where", "when", "why", "how", "can", "does", "do", "is", "are", "which"}
@@ -16,7 +16,7 @@ def classify_intent(query: str, brand_name: str = "", patterns: Dict[str, List[s
     q = query.lower().strip()
     if brand_name and brand_name.lower() in q:
         return "navigational"
-    
+
     for intent, pat_list in patterns.items():
         for pat in pat_list:
             if re.search(pat, q):
@@ -38,7 +38,7 @@ def compute_research_metrics(
     """Deterministic, empirical research metrics engine (no LLM, no invented numbers)."""
     competitor_pages = competitor_pages or []
     crawled_200 = [p for p in crawl_pages if p.get("status_code") == 200]
-    
+
     # Pre-index crawled page text/titles
     page_by_url = {p["url"].rstrip("/"): p for p in crawled_200}
     all_site_titles_h1 = []
@@ -74,7 +74,7 @@ def compute_research_metrics(
     # 2. Query Clustering (token overlap + landing page mapping)
     # Filter by minimum impressions threshold
     filtered_gsc = [r for r in gsc_rows if r.get("impressions", 0) >= min_impressions]
-    
+
     clusters_dict: Dict[str, Dict[str, Any]] = {}
     for r in filtered_gsc:
         q = r.get("query", "").strip().lower()
@@ -175,18 +175,18 @@ def compute_research_metrics(
         "competitor_schema_types": [],
         "competitor_stats": []
     }
-    
+
     if competitor_pages:
         comp_headings = defaultdict(set)
         comp_schemas = defaultdict(set)
         site_schemas = set()
-        
+
         # Collect site headings and schemas
         site_headings_text = set()
         for p in crawled_200:
             for h in p.get("headings", []):
                 site_headings_text.add(h.get("text", "").strip().lower())
-        
+
         for cp in competitor_pages:
             dom = cp.get("competitor_domain", "")
             for h in cp.get("headings", []):

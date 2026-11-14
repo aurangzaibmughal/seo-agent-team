@@ -25,6 +25,18 @@ ISSUE_METADATA = {
         "impact": "Sitemap declares URLs that return HTTP 404/5xx or are not crawlable, wasting search engine crawl budget and causing indexation dropouts.",
         "fix_hint": "Remove non-existent 404 URLs from sitemap or publish the missing pages."
     },
+    "sitemap_missing": {
+        "severity": "medium",
+        "effort": "low",
+        "impact": "Search engines cannot efficiently discover all indexable pages because no XML sitemap was found in robots.txt or standard paths.",
+        "fix_hint": "Generate an XML sitemap and reference it in robots.txt via 'Sitemap: https://domain/sitemap.xml'."
+    },
+    "sitemap_unreadable": {
+        "severity": "medium",
+        "effort": "low",
+        "impact": "XML sitemap returned HTTP 200 but contains invalid or malformed XML syntax, preventing search engines from parsing it.",
+        "fix_hint": "Validate XML syntax against the sitemaps.org schema and ensure all special characters in URLs are properly escaped."
+    },
     "crawled_page_missing_from_sitemap": {
         "severity": "medium",
         "effort": "low",
@@ -43,6 +55,18 @@ ISSUE_METADATA = {
         "impact": "Meta descriptions directly influence organic Click-Through-Rate (CTR) from SERPs even though not a direct ranking signal.",
         "fix_hint": "Craft a persuasive meta description between 70 and 155 characters with a compelling call-to-action."
     },
+    "meta_description_placeholder": {
+        "severity": "high",
+        "effort": "low",
+        "impact": "Page displays generic CMS/theme placeholder or demo text in SERPs, causing loss of user trust and disastrous Click-Through-Rate.",
+        "fix_hint": "Replace the theme default or placeholder tagline with unique, business-tailored copy between 120 and 155 characters."
+    },
+    "meta_description_too_short": {
+        "severity": "medium",
+        "effort": "low",
+        "impact": "Meta description is significantly under 70 characters, wasting valuable search snippet space and failing to attract clicks.",
+        "fix_hint": "Expand meta description to 120–155 characters highlighting unique value propositions and a clear call to action."
+    },
     "missing_h1": {
         "severity": "medium",
         "effort": "low",
@@ -59,7 +83,7 @@ ISSUE_METADATA = {
         "severity": "medium",
         "effort": "low",
         "impact": "Page explicitly signals to search engines not to index itself, passing ranking equity to another canonical target.",
-        "fix_hint": "Ensure canonical tags accurately reflect the preferred indexable URL. If this page is unique and intended to rank independently, make its canonical tag self-referential. Never remove self-referencing canonicals, as self-referential canonicals are an essential SEO best practice."
+        "fix_hint": "Ensure canonical tags accurately reflect the preferred indexable URL. If this page is unique and intended to rank independently, make its canonical tag self-referential. Never remove self-referencing canonicals, as self-referential canonicals are an essential standard SEO recommendation."
     },
     "canonical_mass_misconfiguration": {
         "severity": "high",
@@ -95,7 +119,7 @@ ISSUE_METADATA = {
         "severity": "low",
         "effort": "medium",
         "impact": "Duplicate meta descriptions reduce SERP snippet diversity and lower click-through rates.",
-        "fix_hint": "Customize snippet copy tailored to the unique intent of each page."
+        "fix_hint": "Write snippet copy tailored to the unique intent of each page."
     },
     "title_borderline": {
         "severity": "low",
@@ -152,10 +176,22 @@ ISSUE_METADATA = {
         "fix_hint": "Preload hero images, optimize server response times (TTFB), and implement CDN caching."
     },
     "poor_cls": {
+        "severity": "high",
+        "effort": "medium",
+        "impact": "Cumulative Layout Shift above 0.25 (poor threshold) creates severe visual instability for users during page load.",
+        "fix_hint": "Specify explicit width and height attributes on images/videos and reserve space for dynamic DOM widgets."
+    },
+    "lcp_needs_improvement": {
         "severity": "medium",
         "effort": "medium",
-        "impact": "Cumulative Layout Shift above 0.1 creates visual instability for users during page load.",
-        "fix_hint": "Specify explicit width and height attributes on images/videos and avoid injecting dynamic DOM elements above the fold."
+        "impact": "Largest Contentful Paint between 2.5s and 4.0s falls into Google's 'Needs Improvement' band.",
+        "fix_hint": "Optimize image assets, enable compression, and eliminate render-blocking resources."
+    },
+    "cls_needs_improvement": {
+        "severity": "low",
+        "effort": "low",
+        "impact": "Cumulative Layout Shift between 0.10 and 0.25 falls into Google's 'Needs Improvement' band.",
+        "fix_hint": "Specify aspect ratios on images and reserve container space before dynamic content renders."
     },
     "brand_repeated_in_title": {
         "severity": "medium",
@@ -168,7 +204,7 @@ ISSUE_METADATA = {
 CANONICAL_TO_OTHER_FIX_HINT = (
     "Ensure canonical tags accurately reflect the preferred indexable URL. If this page is unique and "
     "intended to rank independently, make its canonical tag self-referential. Never remove self-referencing "
-    "canonicals, as self-referential canonicals are an essential SEO best practice."
+    "canonicals, as self-referential canonicals are an essential standard SEO recommendation."
 )
 
 # Canonical severity lookup matching the exact rule names produced by issue_rules.py
@@ -177,26 +213,42 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
     "server_error_5xx": "high",
     "broken_link_4xx": "high",
     "canonical_mass_misconfiguration": "high",
+    "meta_description_placeholder": "high",
     "missing_title": "high",
+    "noindex_canonical_conflict": "high",
     "low_performance_score": "high",
     "slow_lcp": "high",
+    "poor_cls": "high",
     "noindex_page": "high",
     "indexable_admin_page": "high",
 
     # Medium base severity
     "redirect_chain": "medium",
+    "insecure_http_url": "medium",
     "canonical_to_other": "medium",
     "indexable_private_page": "medium",
     "missing_canonical": "medium",
+    "meta_description_too_short": "medium",
     "duplicate_title": "medium",
     "missing_h1": "medium",
-    "poor_cls": "medium",
+    "multiple_h1": "medium",
+    "broken_hash_link": "medium",
+    "unmuted_autoplay_video": "medium",
+    "autoplay_video_above_fold": "medium",
+    "mismatched_breadcrumb": "medium",
+    "www_redirect_inconsistency": "medium",
+    "lcp_needs_improvement": "medium",
     "orphan_page": "medium",
     "brand_repeated_in_title": "medium",
     "sitemap_lists_non_existent_url": "medium",
+    "sitemap_missing": "medium",
+    "sitemap_unreadable": "medium",
     "crawled_page_missing_from_sitemap": "medium",
+    "missing_robots_txt": "medium",
 
     # Low base severity
+    "cls_needs_improvement": "low",
+    "trailing_slash_inconsistency": "low",
     "title_borderline": "low",
     "title_too_long": "low",
     "title_too_short": "low",
@@ -204,6 +256,17 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
     "meta_borderline": "low",
     "meta_too_long": "low",
     "duplicate_meta_description": "low",
+    "missing_image_alt": "low",
+    "missing_image_dimensions": "low",
+    "non_modern_image_format": "low",
+    "missing_schema": "low",
+    "missing_open_graph": "low",
+    "missing_twitter_card": "low",
+    "missing_breadcrumbs": "low",
+    "missing_legal_pages": "low",
+    "slug_typo": "low",
+    "content_typo": "low",
+    "currency_anomaly": "low",
 }
 
 def get_deterministic_severity(issue_type: str, url_count: int = 1, total_pages: int = 1) -> str:
@@ -295,7 +358,7 @@ class TechnicalAgent:
                     "severity": "medium",
                     "effort": "medium",
                     "impact": f"Detected issue of type {itype}.",
-                    "fix_hint": "Review and correct according to SEO best practices."
+                    "fix_hint": "Review and correct according to standard SEO recommendations."
                 })
                 grouped[itype] = {
                     "type": itype,

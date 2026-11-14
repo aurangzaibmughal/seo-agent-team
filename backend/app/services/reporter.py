@@ -1,10 +1,10 @@
 import os
 import csv
+import json
 import html
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -71,7 +71,10 @@ class ReportExporter:
         code_data: Optional[Dict[str, Any]] = None,
         is_demo: bool = False,
         agency_name: Optional[str] = None,
-        include_unreviewed: bool = False
+        include_unreviewed: bool = False,
+        crawl_pages: Optional[List[Dict[str, Any]]] = None,
+        strict_lint_gate: bool = False,
+        **kwargs
     ) -> str:
         # Filter items based on review status
         verified_issues = cls.filter_by_review(job_id, verified_issues, "technical_issue", include_unreviewed)
@@ -88,7 +91,7 @@ class ReportExporter:
 
         filename = f"SEO_Report_{job_id[:8]}.pdf"
         file_path = os.path.join(EXPORTS_DIR, filename)
-        
+
         doc = SimpleDocTemplate(file_path, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
         story = []
         styles = getSampleStyleSheet()
@@ -118,36 +121,99 @@ class ReportExporter:
         story.append(Paragraph(f"<b>{header_text}</b>", meta_style))
         story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#e2e8f0'), spaceAfter=8))
 
-        # Completeness Guard Notice
-        job_info = DBManager.get_job(job_id)
-        if job_info and (job_info.get("completeness_status") == "possibly incomplete" or job_info.get("crawl_incomplete") == 1):
-            inc_reasons = []
-            if job_info.get("incomplete_reasons_json"):
-                try:
-                    inc_reasons = json.loads(job_info["incomplete_reasons_json"])
-                except Exception:
-                    inc_reasons = []
-            warn_msg = f"NOTICE: Crawl is possibly incomplete: {'; '.join(inc_reasons) if inc_reasons else 'Pages dropped or sitemap URLs omitted'}"
-            inc_banner = Table([[warn_msg]], colWidths=[540])
-            inc_banner.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fef3c7')),
-                ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#92400e')),
-                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 8),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#f59e0b')),
-                ('PADDING', (0, 0), (-1, -1), 5),
-            ]))
-            story.append(inc_banner)
-            story.append(Spacer(1, 8))
+        # Crawl Completeness & Health Breakdown Notice
+        job_info = DBManager.get_job(job_id) or {}
+
+        # Report-Time QA Linter Gate (A-16): checks evidence, metric plausibility, and speed issue counts vs PSI table
+        from app.services.report_linter import lint_audit_report, ReportLintGateError
+        strat_tasks = strategy_data.get("tasks", []) if strategy_data else []
+        rws = content_data.get("rewrites", []) if content_data else []
+        effective_psi = psi_data if psi_data is not None else (DBManager.get_psi_results(job_id) or [])
+        qa_warnings = lint_audit_report(
+            job=job_info,
+            tech_issues=verified_issues,
+            strategy_tasks=strat_tasks,
+            rewrites=rws,
+            psi_results=effective_psi,
+            code_bundle=code_data.get("bundle") if code_data else None
+        )
+        if qa_warnings:
+            print(f"[Report-Time Linter Gate] {len(qa_warnings)} QA warning(s) detected for job {job_id}:")
+            for w in qa_warnings:
+                print(f"  - {w}")
+            if strict_lint_gate:
+                raise ReportLintGateError(qa_warnings)
+
+        pages_crawled = job_info.get("pages_crawled", len(crawl_pages or []))
+        max_pages = job_info.get("max_pages", 100)
+        sitemap_entries = []
+        if job_info.get("sitemap_entries_json"):
+            try:
+                sitemap_entries = json.loads(job_info["sitemap_entries_json"])
+            except Exception:
+                sitemap_entries = []
+        sitemap_cnt = len(sitemap_entries)
+        comp_status = job_info.get("completeness_status", "complete")
+
+        inc_reasons = []
+        if job_info.get("incomplete_reasons_json"):
+            try:
+                inc_reasons = json.loads(job_info["incomplete_reasons_json"])
+            except Exception:
+                inc_reasons = []
+
+        # Parse dropped / excluded pages with reasons
+        dropped_pages = []
+        raw_dropped = job_info.get("dropped_pages_json")
+        if raw_dropped:
+            try:
+                if isinstance(raw_dropped, str):
+                    dropped_pages = json.loads(raw_dropped)
+                elif isinstance(raw_dropped, list):
+                    dropped_pages = raw_dropped
+            except Exception:
+                dropped_pages = []
+        if not dropped_pages and crawl_pages:
+            for p in crawl_pages:
+                st = p.get("status_code", 200)
+                if st != 200:
+                    dropped_pages.append({"url": p.get("url"), "reason": f"HTTP {st}"})
+
+        is_incomplete = comp_status == "possibly incomplete" or job_info.get("crawl_incomplete") == 1 or bool(inc_reasons)
+        bg_col = colors.HexColor('#fef3c7') if is_incomplete else colors.HexColor('#f0fdf4')
+        border_col = colors.HexColor('#f59e0b') if is_incomplete else colors.HexColor('#22c55e')
+        text_col = colors.HexColor('#92400e') if is_incomplete else colors.HexColor('#166534')
+
+        banner_text = f"<b>Crawl Breakdown:</b> {pages_crawled} HTML pages crawled (limit: {max_pages}) | {sitemap_cnt} sitemap URLs discovered | Status: {comp_status.upper()}"
+        if inc_reasons:
+            banner_text += f"<br/><b>Notes:</b> {'; '.join(inc_reasons)}"
+        if dropped_pages:
+            drop_summary = "; ".join(f"{d.get('url')} ({d.get('reason')})" for d in dropped_pages[:5])
+            if len(dropped_pages) > 5:
+                drop_summary += f" (+{len(dropped_pages) - 5} more)"
+            banner_text += f"<br/><b>Dropped / Excluded Pages ({len(dropped_pages)}):</b> {drop_summary}"
+
+        inc_banner = Table([[Paragraph(banner_text, body_style)]], colWidths=[540])
+        inc_banner.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), bg_col),
+            ('TEXTCOLOR', (0, 0), (-1, -1), text_col),
+            ('GRID', (0, 0), (-1, -1), 1, border_col),
+            ('PADDING', (0, 0), (-1, -1), 5),
+        ]))
+        story.append(inc_banner)
+        story.append(Spacer(1, 8))
 
         # Title
-        story.append(Paragraph(f"Executive SEO & Action Plan Report", title_style))
+        story.append(Paragraph("Executive SEO & Action Plan Report", title_style))
         story.append(Paragraph(f"Target Domain: <b>{target_url}</b> | Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", meta_style))
         story.append(Spacer(1, 10))
 
+        # Dynamic Section Numbering
+        sec_num = 1
+
         # 1. Technical Audit Summary
-        story.append(Paragraph("1. Technical SEO Audit Findings", h2_style))
+        story.append(Paragraph(f"{sec_num}. Technical SEO Audit Findings", h2_style))
+        sec_num += 1
         high_cnt = sum(1 for i in verified_issues if i.get("severity") == "high")
         med_cnt = sum(1 for i in verified_issues if i.get("severity") == "medium")
         low_cnt = sum(1 for i in verified_issues if i.get("severity") == "low")
@@ -219,6 +285,34 @@ class ReportExporter:
                 ('PADDING', (0, 0), (-1, -1), 3),
             ]))
             story.append(t_issues)
+
+            # Detailed Issues Evidence (A-06: Every issue lists affected URLs)
+            story.append(Spacer(1, 8))
+            story.append(Paragraph("<b>Issue Evidence & Affected URLs (Full Reproduction Trail)</b>", h2_style))
+            evidence_rows = [["ID", "Type", "Affected URL", "Found / Required Action"]]
+            for issue in verified_issues:
+                i_id = issue.get("id", "")
+                i_type = issue.get("type", "")
+                hint = html.escape(str(issue.get("fix_hint", "")[:120]))
+                for u in issue.get("urls", []):
+                    evidence_rows.append([
+                        i_id,
+                        i_type,
+                        Paragraph(f"<font size=6.5>{html.escape(u)}</font>", body_style),
+                        Paragraph(f"<font size=6.5>{hint}</font>", body_style)
+                    ])
+            if len(evidence_rows) > 1:
+                t_ev = Table(evidence_rows, colWidths=[40, 110, 240, 150])
+                t_ev.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 6.5),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                    ('PADDING', (0, 0), (-1, -1), 2),
+                ]))
+                story.append(t_ev)
         else:
             story.append(Paragraph("No technical issues identified.", body_style))
 
@@ -272,7 +366,8 @@ class ReportExporter:
         story.append(Spacer(1, 10))
 
         # 2. Performance Section (GSC & GA4)
-        story.append(Paragraph("2. Organic Search Performance (Google Search Console & GA4)", h2_style))
+        story.append(Paragraph(f"{sec_num}. Organic Search Performance (Google Search Console & GA4)", h2_style))
+        sec_num += 1
         if performance_data and "summary_totals" in performance_data:
             totals = performance_data["summary_totals"]
             perf_table_data = [
@@ -297,9 +392,19 @@ class ReportExporter:
             story.append(Paragraph("<i>Performance data not connected (Google Search Console & GA4 not linked).</i>", body_style))
 
         # Core Web Vitals & PageSpeed Section (lab data (Lighthouse))
-        if psi_data:
-            story.append(Spacer(1, 8))
-            story.append(Paragraph("PageSpeed & Core Web Vitals (lab data (Lighthouse))", h2_style))
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("PageSpeed & Core Web Vitals (lab data (Lighthouse))", h2_style))
+
+        if psi_data and any(p.get("performance_score") is not None for p in psi_data):
+            tested_urls = set(p.get("url") for p in psi_data if p.get("url"))
+            total_crawl_count = len(crawl_pages) if crawl_pages else len(tested_urls)
+            disclosure_text = (
+                f"<i>Tested {len(tested_urls)} of {total_crawl_count} crawled pages (sampled top pages by internal inlinks). "
+                f"Metrics are simulated lab data (Lighthouse) under standardized mobile/desktop throttling, strictly separated from field user data (Chrome UX Report / CrUX).</i>"
+            )
+            story.append(Paragraph(disclosure_text, body_style))
+            story.append(Spacer(1, 4))
+
             psi_rows = [["URL", "Device", "Score [lab data (Lighthouse)]", "LCP", "CLS", "FCP", "TTFB"]]
             for p in psi_data[:8]:
                 sc = str(p.get("performance_score")) if p.get("performance_score") is not None else "N/A"
@@ -308,10 +413,14 @@ class ReportExporter:
                 fcp = f"{p.get('fcp_ms')} ms" if p.get("fcp_ms") is not None else "N/A"
                 ttfb = f"{p.get('ttfb_ms')} ms" if p.get("ttfb_ms") is not None else "N/A"
                 dev_str = p.get("strategy", "").capitalize()
-                if p.get("is_cached"):
-                    m_time = p.get("cached_measured_at") or p.get("fetched_at") or ""
-                    clean_time = m_time[:19].replace("T", " ") if m_time else ""
-                    dev_str = f"{dev_str}<br/><font size='5.5' color='#64748b'>(cached, measured at {clean_time})</font>"
+
+                # Requirement: measured_at + fresh/cached label on EVERY PSI row
+                is_cached = bool(p.get("is_cached"))
+                m_time = (p.get("cached_measured_at") if is_cached else None) or p.get("fetched_at") or p.get("measured_at") or ""
+                clean_time = m_time[:19].replace("T", " ") if m_time else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+                cache_status = "cached" if is_cached else "fresh"
+                dev_str = f"{dev_str}<br/><font size='5.5' color='#64748b'>({cache_status}, measured at {clean_time})</font>"
+
                 psi_rows.append([
                     Paragraph(html.escape(p.get("url", "")), body_style),
                     Paragraph(dev_str, body_style),
@@ -332,11 +441,15 @@ class ReportExporter:
                 ('PADDING', (0, 0), (-1, -1), 3),
             ]))
             story.append(t_psi)
+        else:
+            reason = (job_info.get("psi_status") or "API key not configured or calls failed").replace("failed: ", "")
+            story.append(Paragraph(f"<i>PageSpeed unavailable: {reason}</i>", body_style))
 
         story.append(Spacer(1, 10))
 
         # 3. 30-Day Prioritized Action Plan (M4)
-        story.append(Paragraph("3. 30-Day Prioritized SEO Action Plan", h2_style))
+        story.append(Paragraph(f"{sec_num}. 30-Day Prioritized SEO Action Plan", h2_style))
+        sec_num += 1
         tasks = []
         if strategy_data and "tasks" in strategy_data:
             tasks = strategy_data["tasks"]
@@ -371,7 +484,8 @@ class ReportExporter:
         story.append(Spacer(1, 10))
 
         # 4. Content Briefs & On-Page Rewrites (M4)
-        story.append(Paragraph("4. Content Briefs & On-Page Title/Meta Rewrites", h2_style))
+        story.append(Paragraph(f"{sec_num}. Content Briefs & On-Page Title/Meta Rewrites (Suggested drafts: review before use)", h2_style))
+        sec_num += 1
         briefs = content_data.get("briefs", []) if content_data else []
         rewrites = content_data.get("rewrites", []) if content_data else []
         links = content_data.get("internal_links", []) if content_data else []
@@ -408,15 +522,15 @@ class ReportExporter:
             story.append(Spacer(1, 6))
 
         if rewrites:
-            story.append(Paragraph("<b>On-Page Metadata Rewrites (needs human review):</b>", meta_style))
-            rw_rows = [["URL", "Current Title / Meta", "Suggested Title / Meta [needs human review]"]]
+            story.append(Paragraph("<b>On-Page Metadata Rewrites (Suggested drafts: review before use):</b>", meta_style))
+            rw_rows = [["URL", "Current Title / Meta", "Suggested Title / Meta (Suggested drafts: review before use)"]]
             for rw in rewrites[:4]:
                 c_title = html.escape(str(rw.get('current_title', '')))
                 c_meta = html.escape(str(rw.get('current_meta', '')))
                 s_title = html.escape(str(rw.get('suggested_title', '')))
                 s_meta = html.escape(str(rw.get('suggested_meta', '')))
                 curr = f"<b>T:</b> {c_title}<br/><b>M:</b> {c_meta}"
-                sugg = f"<b>[needs human review]</b><br/><b>T:</b> {s_title} ({len(rw.get('suggested_title', ''))} chars)<br/><b>M:</b> {s_meta} ({len(rw.get('suggested_meta', ''))} chars)"
+                sugg = f"<b>[Suggested drafts: review before use]</b><br/><b>T:</b> {s_title} ({len(rw.get('suggested_title', ''))} chars)<br/><b>M:</b> {s_meta} ({len(rw.get('suggested_meta', ''))} chars)"
                 rw_rows.append([
                     Paragraph(html.escape(str(rw.get("url", ""))), body_style),
                     Paragraph(curr, body_style),
@@ -459,7 +573,8 @@ class ReportExporter:
         comp_data = research_data.get("competitor_comparison") if research_data else None
         if comp_data and comp_data.get("competitors"):
             story.append(Spacer(1, 10))
-            story.append(Paragraph("5. Competitor On-Page Comparison", h2_style))
+            story.append(Paragraph(f"{sec_num}. Competitor On-Page Comparison", h2_style))
+            sec_num += 1
             story.append(Paragraph("<i>Note: on-page comparison only — no traffic or backlink data</i>", meta_style))
             c_rows = [["Competitor Domain", "Pages Crawled", "Detected Schema Types", "Content Depth / Headings"]]
             for comp in comp_data.get("competitors", []):
@@ -481,16 +596,21 @@ class ReportExporter:
 
         # 6. Automated Code Fixes & Implementation Package (M5)
         story.append(Spacer(1, 10))
-        story.append(Paragraph("6. Automated Code Fixes & Implementation Package", h2_style))
-        story.append(Paragraph("<i>Code fixes generated deterministically via Jinja2 templates. Download full bundle as ZIP via API/UI.</i>", meta_style))
+        story.append(Paragraph(f"{sec_num}. Automated Code Fixes & Implementation Package", h2_style))
+        sec_num += 1
 
         bundle = code_data.get("bundle", {}) if code_data else {}
         verifier = code_data.get("verifier", {}) if code_data else {}
         artifacts = bundle.get("artifacts", [])
         fix_coverage = bundle.get("fix_coverage", [])
-        platform = bundle.get("platform", "Next.js")
+        platform = bundle.get("platform", "plain_html")
 
-        story.append(Paragraph(f"<b>Target Platform:</b> {platform.upper()} | <b>Generated Files:</b> {len(artifacts)} | <b>ZIP Package:</b> seo-fixes-{job_id[:8]}.zip", body_style))
+        if len(artifacts) > 0:
+            story.append(Paragraph("<i>Code fixes generated deterministically via Jinja2 templates. Download full bundle as ZIP via API/UI.</i>", meta_style))
+            story.append(Paragraph(f"<b>Target Platform:</b> {platform.upper()} | <b>Generated Files:</b> {len(artifacts)} | <b>ZIP Package:</b> seo-fixes-{job_id[:8]}.zip", body_style))
+        else:
+            story.append(Paragraph("<i>No automated code fix bundle generated for this audit. Follow manual implementation instructions.</i>", meta_style))
+            story.append(Paragraph(f"<b>Target Platform:</b> {platform.upper()} | <b>Generated Files:</b> 0 (Manual implementation required)", body_style))
         story.append(Spacer(1, 6))
 
         # Fix Coverage Table
@@ -542,8 +662,49 @@ class ReportExporter:
             ]))
             story.append(t_art)
 
+        # Appendix: Crawled Page Inventory & Health
+        if crawl_pages:
+            story.append(Spacer(1, 10))
+            story.append(Paragraph(f"{sec_num}. Page Inventory & Crawl Health", h2_style))
+            sec_num += 1
+            inv_rows = [["URL", "Status", "Title Length", "Meta Length", "Canonical", "Indexable"]]
+            for p in (crawl_pages or [])[:25]:
+                u = p.get("url", "")
+                sc = str(p.get("status_code", 200))
+                t_len = f"{len(p.get('title') or '')} chars"
+                m_len = f"{len(p.get('meta_desc') or '')} chars"
+                can = "Self" if p.get("canonical") == u else ("Missing" if not p.get("canonical") else "Other")
+                idx = "Yes" if p.get("indexable") else "No"
+                inv_rows.append([
+                    Paragraph(html.escape(u), body_style),
+                    sc,
+                    t_len,
+                    m_len,
+                    can,
+                    idx
+                ])
+            t_inv = Table(inv_rows, colWidths=[200, 45, 75, 75, 75, 70])
+            t_inv.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0f172a')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 7),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('PADDING', (0, 0), (-1, -1), 3),
+            ]))
+            story.append(t_inv)
+
         doc.build(story)
         return file_path
+
+    @classmethod
+    def export_pdf(cls, *args, **kwargs) -> bytes:
+        """Helper to generate PDF and return the raw bytes directly."""
+        # Handle dict job parameter if passed as positional or keyword
+        file_path = cls.generate_pdf(*args, **kwargs)
+        with open(file_path, "rb") as f:
+            return f.read()
 
     @classmethod
     def generate_csv(
@@ -567,7 +728,7 @@ class ReportExporter:
                 writer.writerow(["### DEMO DATA ###", "This export was generated using seeded demonstration data", "", "", "", ""])
 
             writer.writerow(["SECTION", "ID_OR_KEY", "TYPE_OR_QUERY_OR_URL", "METRIC_1", "METRIC_2", "EXPLANATION_OR_DETAIL"])
-            
+
             # Length Tiers Summary
             t_bord = sum(len(i.get("urls", [])) for i in verified_issues if i.get("type") == "title_borderline")
             t_long = sum(len(i.get("urls", [])) for i in verified_issues if i.get("type") == "title_too_long")
@@ -588,6 +749,16 @@ class ReportExporter:
                     f"Affected: {len(i.get('urls', []))}",
                     f"{i.get('impact')} | Fix: {i.get('fix_hint')}"
                 ])
+                # A-06: Every issue lists affected URLs with evidence
+                for u in i.get("urls", []):
+                    writer.writerow([
+                        "Technical Issue URL Evidence",
+                        i.get("id"),
+                        i.get("type"),
+                        u,
+                        f"Severity: {i.get('severity')}",
+                        f"Fix: {i.get('fix_hint')}"
+                    ])
 
             # Sitemap Comparison Detailed Rows
             for i in verified_issues:
@@ -611,7 +782,7 @@ class ReportExporter:
                             "Medium Severity",
                             "Crawled 200 indexable canonical page missing from sitemap.xml. Action: Add to sitemap."
                         ])
-            
+
             # Performance opportunities
             if performance_data:
                 for q in performance_data.get("striking_distance_queries", []):
@@ -668,12 +839,12 @@ class ReportExporter:
             if content_data:
                 for rw in content_data.get("rewrites", []):
                     writer.writerow([
-                        "On-Page Rewrite",
+                        "On-Page Rewrite (Suggested drafts: review before use)",
                         rw.get("url"),
                         f"Cur Title: {rw.get('current_title')}",
                         f"New Title: {rw.get('suggested_title')}",
                         f"New Meta: {rw.get('suggested_meta')}",
-                        "Char bounds enforced by code | Status: needs human review"
+                        "Char bounds enforced by code | Status: Suggested drafts: review before use"
                     ])
                 for il in content_data.get("internal_links", []):
                     writer.writerow([
@@ -812,6 +983,19 @@ class ReportExporter:
                 i.get("fix_hint")
             ])
 
+        # Sheet 2b: Technical Issue Evidence (Per URL) (A-06)
+        ws_iss_ev = wb.create_sheet(title="Issue Evidence (Per URL)")
+        ws_iss_ev.append(["Issue ID", "Type", "Severity", "Affected URL", "Fix Hint"])
+        for i in verified_issues:
+            for u in i.get("urls", []):
+                ws_iss_ev.append([
+                    i.get("id"),
+                    i.get("type"),
+                    i.get("severity", "").upper(),
+                    u,
+                    i.get("fix_hint")
+                ])
+
         # Sheet: Sitemap Comparison
         ws_sm = wb.create_sheet(title="Sitemap Comparison")
         ws_sm.append(["Category", "Issue ID", "Full URL", "Status / Details", "Action Required"])
@@ -895,7 +1079,7 @@ class ReportExporter:
         if content_data:
             for rw in content_data.get("rewrites", []):
                 ws_cont.append([
-                    "Rewrite [needs human review]",
+                    "Rewrite [Suggested drafts: review before use]",
                     rw.get("url"),
                     rw.get("suggested_title"),
                     rw.get("suggested_meta"),

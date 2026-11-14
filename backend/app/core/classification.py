@@ -32,19 +32,19 @@ def classify_page_type(url: Optional[str]) -> str:
     """
     if not url:
         return "content"
-    
+
     path = urlparse(url).path.lower().strip()
     if path.endswith("/"):
         path = path[:-1]
     if not path or path == "":
         return "content"
-        
+
     segments = [s for s in path.split("/") if s]
     for seg in segments:
         clean_seg = re.sub(r'[^a-z0-9\-]', '', seg)
         if clean_seg in UTILITY_SLUGS:
             return "utility"
-            
+
     return "content"
 
 def is_admin_page(url: Optional[str]) -> bool:

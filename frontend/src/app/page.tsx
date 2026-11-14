@@ -284,7 +284,7 @@ const PIPELINE_STEPS = [
 ];
 
 export default function Home() {
-  const [targetUrl, setTargetUrl] = useState("https://webspire-agency.vercel.app");
+  const [targetUrl, setTargetUrl] = useState("");
   const [maxPages, setMaxPages] = useState(30);
   const [freshPsi, setFreshPsi] = useState(false);
   const [competitorsInput, setCompetitorsInput] = useState("");
@@ -951,6 +951,7 @@ export default function Home() {
   const getStepStatus = (stepKey: string) => {
     if (!currentJob) return "inactive";
     const order = [
+      "init",
       "crawling",
       "pagespeed",
       "analysing_technical",
@@ -960,10 +961,14 @@ export default function Home() {
       "researching",
       "strategizing",
       "content_generation",
+      "code_generation",
+      "reporting",
       "completed",
     ];
     const currentIndex = order.indexOf(currentJob.current_step);
     const stepIndex = order.indexOf(stepKey);
+    if (currentIndex === -1 || stepIndex === -1) return "inactive";
+    if (currentJob.status === "failed" && currentIndex === stepIndex) return "failed";
     if (currentIndex > stepIndex) return "done";
     if (currentIndex === stepIndex) return "active";
     return "inactive";
@@ -1223,7 +1228,9 @@ export default function Home() {
                   <div
                     key={step.key}
                     className={`flex flex-col items-center justify-center p-2 rounded-xl border text-center transition ${
-                      status === "done"
+                      status === "failed"
+                        ? "bg-red-950/40 border-red-500/80 text-red-300 ring-2 ring-red-500/20"
+                        : status === "done"
                         ? "bg-emerald-950/20 border-emerald-800/50 text-emerald-400"
                         : status === "active"
                         ? "bg-indigo-950/40 border-indigo-500/80 text-indigo-300 ring-2 ring-indigo-500/20 animate-pulse"

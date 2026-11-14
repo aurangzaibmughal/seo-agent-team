@@ -1,12 +1,9 @@
-import os
 import io
 import csv
-import json
 from uuid import uuid4
 from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -15,9 +12,7 @@ from app.core.db import DBManager, get_sqlite_conn
 from app.services.asana_service import AsanaService
 from app.agents.orchestrator import check_cost_caps
 from app.agents.technical_agent import TechnicalAgent
-from app.agents.research_agent import ResearchAgent
 from app.agents.strategist_agent import StrategistAgent
-from app.models.agent_schemas import TechnicalIssue, MonitorFinding, ResearchOpportunity
 
 client = TestClient(app)
 
@@ -28,7 +23,7 @@ def test_asana_export_preview_and_csv_generation():
     with get_sqlite_conn() as conn:
         conn.execute(
             "INSERT INTO jobs (id, target_url, status, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/", "completed")
+            (job_id, "https://demo-site.example.com/", "completed")
         )
 
     strategy_plan = {
@@ -42,7 +37,7 @@ def test_asana_export_preview_and_csv_generation():
                 "priority_score": 5.0,
                 "done_when": "Zero 404 links returning in crawl audit.",
                 "source_refs": [{"id": "T-001", "type": "issue"}],
-                "affected_urls": ["https://webspire-agency.vercel.app/old-page"]
+                "affected_urls": ["https://demo-site.example.com/old-page"]
             },
             {
                 "id": "S-002",
@@ -53,7 +48,7 @@ def test_asana_export_preview_and_csv_generation():
                 "priority_score": 3.0,
                 "done_when": "All meta descriptions between 70 and 155 chars.",
                 "source_refs": [{"id": "T-002", "type": "issue"}],
-                "affected_urls": ["https://webspire-agency.vercel.app/services"],
+                "affected_urls": ["https://demo-site.example.com/services"],
                 "dependencies": ["S-001"]
             }
         ],
@@ -74,7 +69,7 @@ def test_asana_export_preview_and_csv_generation():
     assert t1["section"] == "Week 1"
     assert t1["due_on"] == "2026-04-08" # 2026-04-01 + 7 days
     assert "Zero 404 links returning in crawl audit." in t1["notes"]
-    assert "https://webspire-agency.vercel.app/old-page" in t1["notes"]
+    assert "https://demo-site.example.com/old-page" in t1["notes"]
 
     # Week 2 task
     t2 = tasks[1]
@@ -116,7 +111,7 @@ def test_asana_preview_approved_tasks_only_filter():
     with get_sqlite_conn() as conn:
         conn.execute(
             "INSERT INTO jobs (id, target_url, status, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/", "completed")
+            (job_id, "https://demo-site.example.com/", "completed")
         )
 
     # 10 tasks in strategy plan
@@ -166,7 +161,7 @@ def test_asana_export_mocked_sync_and_idempotency():
     with get_sqlite_conn() as conn:
         conn.execute(
             "INSERT INTO jobs (id, target_url, status, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/", "completed")
+            (job_id, "https://demo-site.example.com/", "completed")
         )
 
     strategy_plan = {
@@ -228,7 +223,7 @@ def test_cost_caps_enforcement_and_graceful_fallback():
     job_id = f"test-cost-cap-{uuid4().hex[:8]}"
 
     # Test check_cost_caps logic
-    with patch.object(settings, "MAX_JOB_COST_USD", 0.10):
+    with patch.object(settings, "MAX_JOB_COST_USD", 0.10), patch.object(settings, "DAILY_COST_CAP_USD", 10000.0):
         # Under cap
         cap_hit, _ = check_cost_caps(job_id, 0.05)
         assert cap_hit is False
@@ -258,10 +253,10 @@ def test_cost_caps_mid_run_crossing_falls_back():
     with get_sqlite_conn() as conn:
         conn.execute(
             "INSERT INTO jobs (id, target_url, status, cost_usd, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/", "running", 0.0)
+            (job_id, "https://demo-site.example.com/", "running", 0.0)
         )
 
-    with patch.object(settings, "MAX_JOB_COST_USD", 0.10):
+    with patch.object(settings, "MAX_JOB_COST_USD", 0.10), patch.object(settings, "DAILY_COST_CAP_USD", 10000.0):
         # Stage 1: Technical costs $0.06 (under cap)
         tech_cost = 0.06
         cap1, _ = check_cost_caps(job_id, tech_cost)
@@ -294,11 +289,11 @@ def test_job_delete_with_confirm_flag():
     with get_sqlite_conn() as conn:
         conn.execute(
             "INSERT INTO jobs (id, target_url, status, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/", "completed")
+            (job_id, "https://demo-site.example.com/", "completed")
         )
         conn.execute(
             "INSERT INTO crawl_pages (job_id, url, status_code, created_at) VALUES (?, ?, ?, datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/test", 200)
+            (job_id, "https://demo-site.example.com/test", 200)
         )
 
     # 1. DELETE without ?confirm=true must return 400 Bad Request
@@ -369,7 +364,7 @@ def test_orchestrator_cancellation_and_resume():
     with get_sqlite_conn() as conn:
         conn.execute(
             "INSERT INTO jobs (id, target_url, status, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-            (job_id, "https://webspire-agency.vercel.app/", "running")
+            (job_id, "https://demo-site.example.com/", "running")
         )
 
     # Cancel job

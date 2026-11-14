@@ -1,5 +1,5 @@
 from urllib.parse import urlparse
-from typing import Dict, Any, List
+from typing import Dict
 
 def map_url_to_nextjs_path(url: str, router_type: str = "app") -> Dict[str, str]:
     """Maps a crawled URL to Next.js metadata snippet file path and target file path.
@@ -7,7 +7,7 @@ def map_url_to_nextjs_path(url: str, router_type: str = "app") -> Dict[str, str]
     """
     parsed = urlparse(url)
     path = parsed.path.strip("/")
-    
+
     if not path:
         if router_type == "pages":
             return {
@@ -24,7 +24,7 @@ def map_url_to_nextjs_path(url: str, router_type: str = "app") -> Dict[str, str]
         }
 
     parts = path.split("/")
-    
+
     if router_type == "pages":
         if len(parts) == 1:
             target = f"pages/{parts[0]}.tsx"

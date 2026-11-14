@@ -49,8 +49,23 @@ def init_db():
             in_sitemap_not_crawled INTEGER DEFAULT 0,
             crawled_not_in_sitemap INTEGER DEFAULT 0,
             sitemap_found INTEGER DEFAULT 0,
+            sitemap_status TEXT DEFAULT 'pending',
+            psi_status TEXT DEFAULT 'pending',
+            is_demo INTEGER DEFAULT 0,
+            competitor_domains TEXT DEFAULT '[]',
+            failed_fetches_json TEXT DEFAULT '[]',
+            crawl_incomplete INTEGER DEFAULT 0,
+            platform TEXT DEFAULT 'unknown',
+            platform_confidence REAL DEFAULT 0.0,
+            detected_platform TEXT DEFAULT 'unknown',
+            detected_platform_confidence REAL DEFAULT 0.0,
+            router_type TEXT DEFAULT 'app',
+            dropped_pages_json TEXT DEFAULT '[]',
             error TEXT,
             cost_usd REAL DEFAULT 0.0,
+            incomplete_reasons_json TEXT DEFAULT '[]',
+            completeness_status TEXT DEFAULT 'complete',
+            sitemap_entries_json TEXT DEFAULT '[]',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -234,62 +249,41 @@ def init_db():
         )
     """)
 
-    # Auto-migration safety
-    try:
-        cursor.execute("ALTER TABLE agent_runs ADD COLUMN mode TEXT DEFAULT 'fallback'")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE agent_runs ADD COLUMN tokens_prompt INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE agent_runs ADD COLUMN tokens_completion INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE agent_runs ADD COLUMN cost_usd REAL DEFAULT 0.0")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE crawl_pages ADD COLUMN inlinks_count INTEGER DEFAULT 0")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE crawl_pages ADD COLUMN headings_json TEXT DEFAULT '[]'")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE crawl_pages ADD COLUMN text_terms TEXT DEFAULT '[]'")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE crawl_pages ADD COLUMN body_text TEXT DEFAULT ''")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN in_sitemap_not_crawled INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN crawled_not_in_sitemap INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN sitemap_found INTEGER DEFAULT 0")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN psi_status TEXT DEFAULT 'pending'")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN is_demo INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN competitor_domains TEXT DEFAULT '[]'")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN failed_fetches_json TEXT DEFAULT '[]'")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN crawl_incomplete INTEGER DEFAULT 0")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE projects ADD COLUMN platform_confidence REAL DEFAULT 0.0")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN platform TEXT DEFAULT 'unknown'")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN platform_confidence REAL DEFAULT 0.0")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN detected_platform TEXT DEFAULT 'unknown'")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN detected_platform_confidence REAL DEFAULT 0.0")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN router_type TEXT DEFAULT 'app'")
-    except Exception:
-        pass
+    # Auto-migration safety: ensure each column addition is isolated in its own try/except
+    alter_statements = [
+        "ALTER TABLE agent_runs ADD COLUMN mode TEXT DEFAULT 'fallback'",
+        "ALTER TABLE agent_runs ADD COLUMN tokens_prompt INTEGER DEFAULT 0",
+        "ALTER TABLE agent_runs ADD COLUMN tokens_completion INTEGER DEFAULT 0",
+        "ALTER TABLE agent_runs ADD COLUMN cost_usd REAL DEFAULT 0.0",
+        "ALTER TABLE crawl_pages ADD COLUMN inlinks_count INTEGER DEFAULT 0",
+        "ALTER TABLE crawl_pages ADD COLUMN headings_json TEXT DEFAULT '[]'",
+        "ALTER TABLE crawl_pages ADD COLUMN text_terms TEXT DEFAULT '[]'",
+        "ALTER TABLE crawl_pages ADD COLUMN body_text TEXT DEFAULT ''",
+        "ALTER TABLE jobs ADD COLUMN in_sitemap_not_crawled INTEGER DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN crawled_not_in_sitemap INTEGER DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN sitemap_found INTEGER DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN sitemap_status TEXT DEFAULT 'pending'",
+        "ALTER TABLE jobs ADD COLUMN psi_status TEXT DEFAULT 'pending'",
+        "ALTER TABLE jobs ADD COLUMN is_demo INTEGER DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN competitor_domains TEXT DEFAULT '[]'",
+        "ALTER TABLE jobs ADD COLUMN failed_fetches_json TEXT DEFAULT '[]'",
+        "ALTER TABLE jobs ADD COLUMN crawl_incomplete INTEGER DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN platform TEXT DEFAULT 'unknown'",
+        "ALTER TABLE jobs ADD COLUMN platform_confidence REAL DEFAULT 0.0",
+        "ALTER TABLE jobs ADD COLUMN detected_platform TEXT DEFAULT 'unknown'",
+        "ALTER TABLE jobs ADD COLUMN detected_platform_confidence REAL DEFAULT 0.0",
+        "ALTER TABLE jobs ADD COLUMN router_type TEXT DEFAULT 'app'",
+        "ALTER TABLE jobs ADD COLUMN dropped_pages_json TEXT DEFAULT '[]'",
+        "ALTER TABLE jobs ADD COLUMN incomplete_reasons_json TEXT DEFAULT '[]'",
+        "ALTER TABLE jobs ADD COLUMN completeness_status TEXT DEFAULT 'complete'",
+        "ALTER TABLE jobs ADD COLUMN sitemap_entries_json TEXT DEFAULT '[]'",
+        "ALTER TABLE projects ADD COLUMN platform_confidence REAL DEFAULT 0.0",
+    ]
+    for stmt in alter_statements:
+        try:
+            cursor.execute(stmt)
+        except Exception:
+            pass
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS code_outputs (
             id TEXT PRIMARY KEY,
@@ -299,6 +293,46 @@ def init_db():
             FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS review_items (
+            id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            item_ref TEXT NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            reviewer_note TEXT DEFAULT '',
+            original_payload_json TEXT DEFAULT '{}',
+            edited_payload_json TEXT DEFAULT '{}',
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS review_events (
+            id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            old_value TEXT,
+            new_value TEXT,
+            reviewer_note TEXT,
+            timestamp TEXT NOT NULL,
+            FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
+        )
+    """)
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN sitemap_entries_json TEXT DEFAULT '[]'")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN completeness_status TEXT DEFAULT 'complete'")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN incomplete_reasons_json TEXT DEFAULT '[]'")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 
@@ -856,7 +890,7 @@ class DBManager:
         cursor.execute("SELECT * FROM crawl_pages WHERE job_id = ? ORDER BY created_at ASC LIMIT ?", (job_id, limit))
         rows = cursor.fetchall()
         conn.close()
-        
+
         result = []
         for r in rows:
             d = dict(r)
@@ -929,7 +963,7 @@ class DBManager:
         psi_data["id"] = psi_id
         if "fetched_at" not in psi_data:
             psi_data["fetched_at"] = datetime.now(timezone.utc).isoformat()
-        
+
         raw_obj = psi_data.get("raw_json") or {}
         if not isinstance(raw_obj, dict):
             try:
@@ -996,7 +1030,7 @@ class DBManager:
         now = datetime.now(timezone.utc).isoformat()
         if "created_at" not in run_data:
             run_data["created_at"] = now
-            
+
         conn = get_sqlite_conn()
         cursor = conn.cursor()
         cursor.execute("""
