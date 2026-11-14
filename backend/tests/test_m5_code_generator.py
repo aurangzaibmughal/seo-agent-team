@@ -510,25 +510,25 @@ async def test_orchestrator_graceful_handling_on_code_generator_failure():
 # 12. Test that every URL appearing in report exists in crawl_pages
 def test_every_url_in_report_exists_in_crawl_pages():
     crawl_pages = [
-        {"url": "https://webspire-agency.vercel.app/", "status_code": 200, "title": "Home", "meta_desc": "Home meta"},
-        {"url": "https://webspire-agency.vercel.app/portfolio", "status_code": 200, "title": "Portfolio", "meta_desc": "Portfolio meta"},
-        {"url": "https://webspire-agency.vercel.app/contact", "status_code": 200, "title": "Contact", "meta_desc": "Contact meta"}
+        {"url": "https://demo-site.example.com/", "status_code": 200, "title": "Home", "meta_desc": "Home meta"},
+        {"url": "https://demo-site.example.com/portfolio", "status_code": 200, "title": "Portfolio", "meta_desc": "Portfolio meta"},
+        {"url": "https://demo-site.example.com/contact", "status_code": 200, "title": "Contact", "meta_desc": "Contact meta"}
     ]
     crawl_urls = {p["url"].rstrip("/") for p in crawl_pages}
 
     rewrites = [
-        {"url": "https://webspire-agency.vercel.app/portfolio", "current_title": "Portfolio", "suggested_title": "Portfolio | WebSpire", "current_meta": "m", "suggested_meta": "sm"}
+        {"url": "https://demo-site.example.com/portfolio", "current_title": "Portfolio", "suggested_title": "Portfolio | AcmeAgency", "current_meta": "m", "suggested_meta": "sm"}
     ]
     csv_text = CodeTemplateEngine.render_metadata_csv(rewrites)
 
     # Find all domain URLs in rendered text
     import re
-    found_urls = re.findall(r"https://webspire-agency\.vercel\.app[^\s,\"\']*", csv_text)
+    found_urls = re.findall(r"https://demo-site\.example\.com[^\s,\"\']*", csv_text)
     for u in found_urls:
         assert u.rstrip("/") in crawl_urls, f"URL {u} in report does not exist in crawl_pages"
 
     # Synthetic / invalid URL must NOT be allowed
-    bad_url = "https://webspire-agency.vercel.app/services/ai-automation"
+    bad_url = "https://demo-site.example.com/services/ai-automation"
     assert bad_url not in crawl_urls
 
 
@@ -757,7 +757,7 @@ def test_provenance_issue_ids_must_exist_in_verified_issues():
         issue_type_by_id={"T-001": "broken_link_4xx", "T-002": "duplicate_title"}
     )
     assert status == "failed"
-    assert "claims issue ID 'T-999-unverified' which does not exist in verified issues" in reason
+    assert "claims issue ID 'T-999-unverified' which does not exist in confirmed issues" in reason
 
 
 # 19. Next.js generates llms.txt at public/llms.txt (not app/llms.txt)

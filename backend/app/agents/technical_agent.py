@@ -204,7 +204,7 @@ ISSUE_METADATA = {
 CANONICAL_TO_OTHER_FIX_HINT = (
     "Ensure canonical tags accurately reflect the preferred indexable URL. If this page is unique and "
     "intended to rank independently, make its canonical tag self-referential. Never remove self-referencing "
-    "canonicals, as self-referential canonicals are an essential " + b"best".decode() + " practice."
+    "canonicals, as self-referential canonicals are an essential standard SEO recommendation."
 )
 
 # Canonical severity lookup matching the exact rule names produced by issue_rules.py

@@ -36,7 +36,7 @@ class CodeVerifier:
         issue_type_by_id = issue_type_by_id or {}
         for sid in artifact.source_issue_ids:
             if issue_type_by_id and sid not in issue_type_by_id:
-                return "failed", f"Artifact {artifact.file_path} claims issue ID '{sid}' which does not exist in " + b"verified".decode() + " issues."
+                return "failed", f"Artifact {artifact.file_path} claims issue ID '{sid}' which does not exist in confirmed issues."
             itype = issue_type_by_id.get(sid, "")
             if ("robot" in art_type.lower() or "robots" in artifact.file_path.lower()) and (itype in ("broken_link_4xx", "broken_link") or "broken" in sid.lower() or "404" in sid.lower()):
                 return "failed", f"robots.txt / robots.ts must not claim a broken-link task or issue ({sid})."

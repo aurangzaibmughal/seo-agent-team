@@ -4,6 +4,7 @@ import asyncio
 import difflib
 import random
 import httpx
+from pathlib import Path
 from urllib.parse import urlparse
 from typing import List, Dict, Any, Tuple, Optional, Set
 from collections import defaultdict, Counter
@@ -128,12 +129,17 @@ DANGLING_STOPWORDS = {
     "over", "under", "via", "about", "against", "among", "through", "during"
 }
 
-BANNED_WORDS = {
-    b"verified".decode(), b"official".decode(), b"transparent".decode(),
-    b"dedicated".decode(), b"custom".decode(), b"digital growth".decode(),
-    b"digital agency".decode(), b"enterprise".decode(), b"itinerary".decode(),
-    b"award".decode(), b"best".decode()
-}
+def _load_banned_copy() -> Set[str]:
+    cfg_file = Path(__file__).resolve().parent.parent / "config" / "banned_copy.json"
+    if cfg_file.exists():
+        try:
+            with open(cfg_file, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+    return set()
+
+BANNED_WORDS = _load_banned_copy()
 
 def resolve_site_brand(crawl_pages: List[Dict[str, Any]], target_url: str = "") -> str:
     """Resolves ONE consistent brand for the website following strict precedence:

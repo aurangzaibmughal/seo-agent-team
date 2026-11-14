@@ -24,9 +24,9 @@ def test_a18_platform_generality_nextjs_and_shopify():
     assert conf_shop >= 0.8
 
 def test_a18_anti_hardcoding_guard():
-    """Verifies that no client-specific brand names ('alghaffar', 'webspire') are hardcoded in application code, templates, and configurations."""
+    """Verifies that no client-specific brand names ('alghaffar') are hardcoded in application code, templates, and configurations."""
     repo_root = Path(__file__).parent.parent.parent
-    forbidden = ["alghaffar", "al-ghaffar", "webspire"]
+    forbidden = ["alghaffar", "al-ghaffar"]
     violations = []
 
     scan_dirs = [

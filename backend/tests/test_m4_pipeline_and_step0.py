@@ -784,7 +784,7 @@ def test_canonical_to_other_fixed_hint_template():
     from app.agents.technical_agent import CANONICAL_TO_OTHER_FIX_HINT, TechnicalAgent
     # Must not advise removing self-referencing canonicals
     assert "Never remove self-referencing canonicals" in CANONICAL_TO_OTHER_FIX_HINT
-    assert "best practice" in CANONICAL_TO_OTHER_FIX_HINT
+    assert "standard SEO recommendation" in CANONICAL_TO_OTHER_FIX_HINT
 
     # TechnicalAgent must apply this fixed hint template
     candidate = [{
@@ -1049,8 +1049,8 @@ def test_rewrites_near_duplicate_and_no_change_needed_and_seo_friendly():
     fine_page = {
         "url": "https://example.com/fine",
         "status_code": 200,
-        "title": "Professional Web Design Services And Digital Transformation Solutions Agency | WebSpire", # >60 chars
-        "meta_desc": "Explore WebSpire's certified digital services: custom web design, SEO-Friendly setup, and responsive web development for business clients worldwide." # 151 chars (fine)
+        "title": "Professional Web Design Services And Digital Transformation Solutions Agency | AcmeAgency", # >60 chars
+        "meta_desc": "Explore AcmeAgency's certified digital services: custom web design, SEO-Friendly setup, and responsive web development for business clients worldwide." # 151 chars (fine)
     }
     rep = ContentAgent._run_deterministic([], [fine_page], [], {}, [])
     assert len(rep.rewrites) >= 1
@@ -1061,19 +1061,19 @@ def test_rewrites_near_duplicate_and_no_change_needed_and_seo_friendly():
     rw1 = OnPageRewrite(
         url="https://example.com/page1",
         current_title="Page 1",
-        suggested_title="Page 1 | WebSpire",
+        suggested_title="Page 1 | AcmeAgency",
         current_meta="Custom Next.js engineering for clients in Pakistan and UK.",
-        suggested_meta="WebSpire is agency engineering custom Next.js websites for clients in Pakistan and UK."
+        suggested_meta="AcmeAgency is agency engineering custom Next.js websites for clients in Pakistan and UK."
     )
     rw2 = OnPageRewrite(
         url="https://example.com/page2",
         current_title="Page 2",
-        suggested_title="Page 2 | WebSpire",
+        suggested_title="Page 2 | AcmeAgency",
         current_meta="Custom Next.js engineering for clients in USA and UAE.",
-        suggested_meta="WebSpire is agency engineering custom Next.js websites for clients in Pakistan and UK."
+        suggested_meta="AcmeAgency is agency engineering custom Next.js websites for clients in Pakistan and UK."
     )
     c_rep = ContentAgentReport(summary="test", briefs=[], rewrites=[rw1, rw2], internal_links=[])
-    v_rep = Verifier.verify_content_outputs(c_rep, [fine_page, {"url": "https://example.com/page1", "title": "Page 1", "meta_desc": "meta", "status_code": 200}, {"url": "https://example.com/page2", "title": "Page 2", "meta_desc": "meta", "status_code": 200}], [], {}, project_name="WebSpire")
+    v_rep = Verifier.verify_content_outputs(c_rep, [fine_page, {"url": "https://example.com/page1", "title": "Page 1", "meta_desc": "meta", "status_code": 200}, {"url": "https://example.com/page2", "title": "Page 2", "meta_desc": "meta", "status_code": 200}], [], {}, project_name="AcmeAgency")
     assert len(v_rep.rejected_rewrites) >= 1
     assert "near-duplicate" in v_rep.rejected_rewrites[0]["reason"].lower()
 

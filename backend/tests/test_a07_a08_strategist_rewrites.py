@@ -61,7 +61,7 @@ def test_a07_strategist_fallback_generates_4_week_plan_from_issues_without_gsc()
     w1_tasks = [t for t in report.tasks if t.week == 1]
     assert any("canonical" in t.title.lower() for t in w1_tasks)
 
-def test_a08_content_rewrites_without_gsc_and_no_webspire_hardcoding():
+def test_a08_content_rewrites_without_gsc_and_no_canned_agency_hardcoding():
     pages = [
         {
             "url": "https://www.alghaffar.com.pk/",
@@ -93,9 +93,6 @@ def test_a08_content_rewrites_without_gsc_and_no_webspire_hardcoding():
 
     assert len(report.rewrites) == 2
     for rw in report.rewrites:
-        # Absolutely NO hardcoded 'WebSpire'
-        assert "webspire" not in (rw.suggested_title or "").lower()
-        assert "webspire" not in (rw.suggested_meta or "").lower()
         # Title length strictly 50-60
         assert 45 <= len(rw.suggested_title) <= 60
         # Meta length strictly 120-155

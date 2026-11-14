@@ -197,8 +197,8 @@ async def test_ssrf_dns_rebinding_connect_time_guard():
 def test_ssrf_allows_safe_public_urls():
     """Verify valid public HTTPS/HTTP URLs pass validation."""
     valid_urls = [
-        "https://webspire-agency.vercel.app/",
-        "https://webspire-agency.vercel.app/services",
+        "https://demo-site.example.com/",
+        "https://demo-site.example.com/services",
         "https://example.com",
         "http://example.com",
     ]
@@ -326,7 +326,7 @@ def test_demo_mode_disabled_in_production():
         token = create_session_token({"role": "admin"})
         res = client.post(
             "/api/jobs",
-            json={"url": "https://webspire-agency.vercel.app/", "max_pages": 10, "is_demo": True},
+            json={"url": "https://demo-site.example.com/", "max_pages": 10, "is_demo": True},
             headers={"Authorization": f"Bearer {token}"}
         )
         assert res.status_code == 400

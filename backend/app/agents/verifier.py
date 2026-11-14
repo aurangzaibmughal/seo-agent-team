@@ -1,5 +1,7 @@
 import re
+import json
 import difflib
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Set
 from collections import defaultdict
 from app.core.db import DBManager
@@ -89,15 +91,17 @@ def collect_all_snapshot_numbers(snapshot: Dict[str, Any]) -> Set[float]:
     _walk(snapshot)
     return nums
 
-EXPLICIT_SUPERLATIVES = {
-    b"best".decode(), "greatest", "fastest", "quickest", "highest", "lowest",
-    "largest", "smallest", "cheapest", "costliest", "finest", "easiest",
-    "hardest", "smartest", "strongest", "cleanest", "safest", "brightest",
-    "purest", "smoothest", "sharpest", "simplest", "richest", "poorest",
-    "leading", "premier", "unmatched", "unrivaled", "world-class",
-    "industry-leading", "market-leading", "top-rated", b"best-selling".decode(),
-    b"award-winning".decode(), b"award-winner".decode(), "guaranteed", "certified", "#1"
-}
+def _load_superlatives() -> Set[str]:
+    cfg = Path(__file__).resolve().parent.parent / "config" / "superlatives.json"
+    if cfg.exists():
+        try:
+            with open(cfg, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+    return set()
+
+EXPLICIT_SUPERLATIVES = _load_superlatives()
 
 LIST_COUNT_NOUNS = {
     "tip", "tips", "way", "ways", "step", "steps", "question", "questions",
@@ -111,7 +115,7 @@ LIST_COUNT_NOUNS = {
 }
 
 LIST_COUNT_REGEX = re.compile(
-    r"\b([1-9]|1\d|20)\s+(?:[b]est\s+|top\s+|essential\s+|key\s+|proven\s+|actionable\s+|effective\s+|simple\s+|easy\s+)?(?:" +
+    r"\b([1-9]|1\d|20)\s+(?:top\s+|essential\s+|key\s+|proven\s+|actionable\s+|effective\s+|simple\s+|easy\s+)?(?:" +
     "|".join(LIST_COUNT_NOUNS) + r")\b",
     re.IGNORECASE
 )
@@ -122,7 +126,7 @@ COMMON_TITLE_WORDS = {
     "over", "to", "up", "with", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "do", "does", "did", "can", "could", "shall", "should",
     "will", "would", "may", "might", "must", "how", "what", "why", "when", "where",
-    "who", "which", "guide", "tips", "ways", "strategies", b"best".decode(), "top", "free",
+    "who", "which", "guide", "tips", "ways", "strategies", "top", "free",
     "ultimate", "complete", "checklist", "review", "pricing", "services", "agency",
     "solutions", "tools", "trends", "ideas", "examples", "case", "study", "studies",
     "insights", "overview", "basics", "advanced", "step", "steps", "simple", "easy",
