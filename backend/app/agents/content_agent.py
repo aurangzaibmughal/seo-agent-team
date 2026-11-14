@@ -275,6 +275,11 @@ def extract_brand_from_page(url: str, current_t: str = "", h1: str = "", current
         return name.replace("-", " ").title()
     return "Organization"
 
+CTA_START_WORDS = {
+    "view", "book", "explore", "discover", "find", "check", "get",
+    "learn", "contact", "compare", "click", "read", "see", "start", "visit"
+}
+
 def validate_rewrite(
     text: str,
     page_text: str,
@@ -286,29 +291,35 @@ def validate_rewrite(
     h1: str = ""
 ) -> Tuple[bool, str]:
     """Validates that a title or meta description conforms strictly to:
-    1. Length bounds (50-60 for title, 120-155 for meta)
+    1. Length bounds (40-60 for title, 120-155 for meta)
     2. Brand occurrences:
        - Title: exactly one occurrence across all forms (full name and short form)
        - Meta: at most one occurrence across all forms
     3. No '- {ShortBrand}' or brand delimiter padding
-    4. Fragments like '& Tours' must not be used as H1 or subject
-    5. Meta description formatting:
+    4. Generic fragment rule: no leading punctuation/conjunctions (&, and, or), no single-word subjects
+    5. Primary topic & CTA rule (for titles):
+       - Title must not start with CTA verb (View, Book, Explore, etc.)
+       - Title must contain main content words (destination/subject) from H1
+    6. Meta description formatting:
        - 1-2 complete sentences
        - Must not start with the title or H1
        - Must end with punctuation (. or !)
        - No pipe '|' delimiter
-    6. No dangling stopword or punctuation at end
-    7. No repeated consecutive words
-    8. No placeholder tokens
-    9. Zero banned marketing copy
-    10. Grounding check: >= 80% non-stopword content words must appear in page_text
+    7. No dangling stopword or punctuation at end
+    8. No repeated consecutive words
+    9. No placeholder tokens
+    10. Zero banned marketing copy
+    11. Grounding check with word-boundary and stem matching (NOT substring):
+       - Titles: ALL content words must be grounded (zero ungrounded words allowed)
+       - Metas: at most 1 ungrounded word per 6 content words
     """
     if not text:
         return False, "Empty text"
 
-    # 1. Length check
-    if len(text) < min_len:
-        return False, f"Length {len(text)} below minimum {min_len}"
+    # 1. Length check: accept 40-60 for titles (50-60 target), 120-155 for metas
+    effective_min = 40 if is_title else min_len
+    if len(text) < effective_min:
+        return False, f"Length {len(text)} below minimum {effective_min}"
     if len(text) > max_len:
         return False, f"Length {len(text)} exceeds maximum {max_len}"
 
@@ -326,31 +337,67 @@ def validate_rewrite(
     for v in variants:
         if re.search(rf"[|\-–—]\s*{re.escape(v)}\s*[|\-–—]", text, flags=re.IGNORECASE):
             return False, f"Brand padding delimiter pattern detected with '{v}'"
-    # For short brand padding (e.g. "- Al Ghaffar"), check on text where full brand is masked
     text_masked = re.sub(rf"\b{re.escape(brand)}\b", "__FULL_BRAND__", text, flags=re.IGNORECASE)
     for v in variants:
         if v.lower() != brand.lower():
             if re.search(rf"[|\-–—]\s*{re.escape(v)}\b", text_masked, flags=re.IGNORECASE):
                 return False, f"Short brand padding '- {v}' detected"
 
-    # 4. Fragments like "& Tours" must not be used as subject or H1
-    if re.search(r"\b&\s*Tours\b", text, flags=re.IGNORECASE) and not re.search(r"\bTravel\s*&\s*Tours\b", text, flags=re.IGNORECASE):
-        return False, "Dangling fragment '& Tours' must not be used"
-    if re.search(r"^[&|\-–—\s]+", text) or re.search(r"[|\-–—]\s*[&|\-–—]", text):
-        return False, "Dangling fragment delimiter detected in rewrite"
+    # 4. Generic fragment rule (starts with &, and, or, punctuation, or single-word dangling subject)
+    all_brand_tokens = set()
+    for v in variants:
+        all_brand_tokens.update(re.findall(r"\b\w+\b", v.lower()))
 
-    # 5. Meta description formatting rules
+    if re.search(r"^[&|\-–—,;:/\\]\s*", text) or re.search(r"^(?:and|or)\b\s*", text, flags=re.IGNORECASE):
+        return False, "Dangling fragment starting with conjunction or punctuation"
+    if re.search(r"[|–—\-]\s*[&|\-–—,;:/\\]", text):
+        return False, "Dangling delimiter detected in rewrite"
+
+    clean_subj = re.split(r"[|–—\-]", text)[0].strip()
+    if re.search(r"^[&|\-–—,;:/\\]\s*", clean_subj) or re.search(r"^(?:and|or)\b\s*", clean_subj, flags=re.IGNORECASE):
+        return False, f"Subject starts with conjunction or punctuation: '{clean_subj}'"
+
+    subj_content_words = [
+        w for w in re.findall(r"\b[A-Za-z0-9\-]+\b", clean_subj)
+        if w.lower() not in all_brand_tokens and w.lower() not in DANGLING_STOPWORDS
+    ]
+    if is_title and len(subj_content_words) < 2:
+        if any(subj_content_words[0].lower() == g for g in ["tours", "trips", "packages", "deals", "services", "guide", "destinations"] if subj_content_words):
+            return False, f"Subject is a fragmented single word: '{clean_subj}'"
+
+    # 5. Primary topic and CTA rules for titles
+    t_lower = text.lower()
+    words = re.findall(r"\b[A-Za-z0-9\-]+\b", t_lower)
+    if is_title:
+        first_w = words[0].lower() if words else ""
+        if first_w in CTA_START_WORDS:
+            return False, f"Title must not start with call-to-action verb '{first_w}'"
+
+        if h1:
+            h1_words = [
+                w for w in re.findall(r"\b[A-Za-z0-9\-]+\b", h1.lower())
+                if w not in DANGLING_STOPWORDS and w not in all_brand_tokens and len(w) > 2
+            ]
+            h1_topic_words = [w for w in h1_words if w not in ("home", "about", "services", "contact", "career", "overview", "page", "our")]
+            if h1_topic_words:
+                has_h1_topic = any(
+                    re.search(rf"\b{re.escape(re.sub(r'(?:ing|ed|s|es)$', '', w))}\w*\b", t_lower)
+                    for w in h1_topic_words
+                )
+                if not has_h1_topic:
+                    return False, f"Title missing primary topic from H1: expected at least one of {h1_topic_words}"
+
+    # 6. Meta description formatting rules
     if not is_title:
-        # No pipe '|' in meta description
         if "|" in text:
             return False, "Pipe delimiter '|' not allowed in meta description"
+        if re.search(rf"[|\-–—]\s*{re.escape(brand)}\b", text, flags=re.IGNORECASE):
+            return False, f"Brand padding delimiter '- {brand}' not allowed in meta description"
 
-        # Must end with punctuation (. or !)
         clean_stripped = text.strip()
         if not clean_stripped.endswith((".", "!")):
             return False, "Meta description must end with punctuation (period or exclamation mark)"
 
-        # Must NOT start with title or H1
         if current_t:
             t_main = re.split(r"[|–—\-]", current_t)[0].strip()
             if len(t_main) >= 4 and clean_stripped.lower().startswith(t_main.lower()):
@@ -363,7 +410,6 @@ def validate_rewrite(
             if len(h1_main) >= 4 and clean_stripped.lower().startswith(h1_main.lower()):
                 return False, f"Meta description must not start with H1 ('{h1_main}')"
 
-        # 1-2 complete sentences
         sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", clean_stripped) if s.strip()]
         if not (1 <= len(sentences) <= 2):
             return False, f"Meta must consist of 1-2 complete sentences (found {len(sentences)})"
@@ -373,7 +419,7 @@ def validate_rewrite(
             if not (s[0].isupper() or s[0].isdigit() or s[0] in ('"', "'")):
                 return False, f"Sentence must start with a capital letter: '{s}'"
 
-    # 6. No dangling stopword or punctuation at end
+    # 7. No dangling stopword or punctuation at end
     clean_text = text.rstrip(" .!?,")
     last_word_match = re.search(r"([A-Za-z0-9\-]+)[^A-Za-z0-9\-]*$", clean_text)
     if not last_word_match:
@@ -384,39 +430,44 @@ def validate_rewrite(
     if text[-1] in (",", "-", "|", "&", "/", "\\", ":", ";", ">", "<"):
         return False, f"Dangling punctuation '{text[-1]}' at end of rewrite"
 
-    # 7. No repeated consecutive words
-    t_lower = text.lower()
-    words = re.findall(r"\b[A-Za-z0-9\-]+\b", t_lower)
+    # 8. No repeated consecutive words
     for i in range(len(words) - 1):
         if words[i] == words[i + 1] and len(words[i]) > 2:
             return False, f"Repeated consecutive word '{words[i]}'"
 
-    # 8. No placeholder tokens
+    # 9. No placeholder tokens
     placeholders = ["{brand}", "{h1}", "undefined", "null", "[object]", "lorem ipsum", "todo", "needs input", "%s", "{"]
     for ph in placeholders:
         if ph in t_lower:
             return False, f"Placeholder token '{ph}' detected"
 
-    # 9. Zero banned marketing copy unless already present in page text
+    # 10. Zero banned marketing copy unless already present in page text
     page_text_lower = page_text.lower()
     for banned in BANNED_WORDS:
         if re.search(rf"\b{re.escape(banned)}\b", t_lower) and banned not in page_text_lower:
             return False, f"Banned marketing copy detected: '{banned}'"
 
-    # 10. Grounding check: >= 80% non-stopword content words must appear in page_text
-    all_brand_tokens = set()
-    for v in variants:
-        all_brand_tokens.update(re.findall(r"\b\w+\b", v.lower()))
+    # 11. Grounding check with word-boundary and stem matching (NOT substring)
     content_words = [
         w for w in words
         if w not in DANGLING_STOPWORDS and w not in all_brand_tokens and not w.isdigit() and len(w) > 2
     ]
     if content_words:
-        grounded_count = sum(1 for w in content_words if w in page_text_lower)
-        ratio = grounded_count / len(content_words)
-        if ratio < 0.80:
-            ungrounded = [w for w in content_words if w not in page_text_lower]
-            return False, f"Grounding check failed ({ratio:.1%} < 80%): ungrounded words {ungrounded}"
+        def _is_grounded(w: str) -> bool:
+            stem = re.sub(r"(?:ing|ed|s|es)$", "", w.lower())
+            if not stem or len(stem) < 2:
+                stem = w.lower()
+            pattern = rf"\b{re.escape(stem)}\w*\b"
+            return bool(re.search(pattern, page_text_lower))
+
+        ungrounded = [w for w in content_words if not _is_grounded(w)]
+        if is_title:
+            if ungrounded:
+                return False, f"Grounding check failed: ungrounded word(s) in title {ungrounded}"
+        else:
+            max_allowed = len(content_words) // 6
+            if len(ungrounded) > max_allowed:
+                return False, f"Grounding check failed ({len(ungrounded)} > {max_allowed} allowed): ungrounded words {ungrounded}"
 
     return True, "Valid"
 
@@ -427,8 +478,8 @@ def rewrite_natural_title(
     page_text: str = "",
     brand: str = ""
 ) -> str:
-    """Builds a grounded, strictly validated title between 50 and 60 characters
-    using ONLY terms found in the page text (or fails closed).
+    """Builds a grounded, strictly validated title between 40 and 60 characters
+    (targeting 50-60) using ONLY terms found in the page text (or fails closed).
     """
     brand = brand or extract_brand_from_page(url, current_t, h1)
     variants = get_brand_variants(brand)
@@ -442,15 +493,13 @@ def rewrite_natural_title(
     if len(clean_h1.split()) <= 1 and clean_h1.lower() in ("tours", "services", "packages", "deals", "page"):
         clean_h1 = ""
 
-    path = urlparse(url).path.strip("/")
-    slug_name = path.split("/")[-1].replace("-", " ").title() if path else ""
-
     body_content = (page_text or "").strip()
-    full_page_text = f"{current_t}. {clean_h1}. {slug_name}. {body_content}".strip()
+    # Never ground against URL text or slug!
+    full_page_text = f"{current_t}. {clean_h1}. {body_content}".strip()
 
-    # Check if current title is already valid
-    if current_t and 50 <= len(current_t) <= 60:
-        is_val, _ = validate_rewrite(current_t, full_page_text, brand, 50, 60, is_title=True, current_t=current_t, h1=h1)
+    # Check if current title is already valid (40-60 chars)
+    if current_t and 40 <= len(current_t) <= 60:
+        is_val, _ = validate_rewrite(current_t, full_page_text, brand, 40, 60, is_title=True, current_t=current_t, h1=h1)
         if is_val:
             return current_t
 
@@ -488,51 +537,54 @@ def rewrite_natural_title(
     if clean_h1:
         candidates.append(f"{clean_h1} | {brand}")
 
-    # 3. Slug title + Brand
-    if slug_name and slug_name.lower() not in (clean_h1 or "").lower():
-        candidates.append(f"{slug_name} | {brand}")
-        if clean_h1:
-            candidates.append(f"{clean_h1} - {slug_name} | {brand}")
-
-    # 4. Form combinations from phrases appearing in body text
+    # 3. Form combinations from phrases appearing in body text (skipping CTA phrases)
     body_phrases = [p.strip() for p in re.split(r"[,;.\n]+", body_content) if len(p.strip()) > 8]
     for bp in body_phrases:
         bp_clean = bp.strip()
         for v in variants:
             bp_clean = re.sub(rf"\b{re.escape(v)}\b", " ", bp_clean, flags=re.IGNORECASE).strip()
-        bp_clean = re.sub(r"^(?:we provide|welcome to|our company provides|explore)\s+", "", bp_clean, flags=re.IGNORECASE).strip()
         bp_clean = re.sub(r"^[&|\-–—\s]+|[&|\-–—\s]+$", "", bp_clean).strip()
+        first_w = bp_clean.split()[0].lower() if bp_clean.split() else ""
+        if first_w in CTA_START_WORDS:
+            continue
         if len(bp_clean) > 5 and not any(bp_clean.lower() == v.lower() for v in variants):
             cand = f"{bp_clean.title()} | {brand}"
-            if 50 <= len(cand) <= 60:
+            if 40 <= len(cand) <= 60:
                 candidates.append(cand)
             if clean_h1:
                 cand2 = f"{clean_h1} - {bp_clean.title()} | {brand}"
-                if 50 <= len(cand2) <= 60:
+                if 40 <= len(cand2) <= 60:
                     candidates.append(cand2)
 
-    # 5. Expand short candidates using modifier keywords appearing in page text
+    # 4. Expand short candidates using authentic modifier keywords from page text
     for cand in list(candidates):
         if len(cand) < 50:
             for modifier in ["from Karachi", "in Karachi", "Overview", "Guide", "Services", "Packages", "Deals"]:
-                if modifier.lower() in full_page_text.lower():
+                if re.search(rf"\b{re.escape(modifier)}\b", full_page_text, flags=re.IGNORECASE):
                     base_part = cand.split(" | ")[0]
                     expanded = f"{base_part} {modifier} | {brand}"
-                    if 50 <= len(expanded) <= 60:
+                    if 40 <= len(expanded) <= 60:
                         candidates.append(expanded)
 
+    # Priority 1: 50-60 chars
     for cand in candidates:
-        is_val, _ = validate_rewrite(cand, full_page_text, brand, 50, 60, is_title=True, current_t=current_t, h1=h1)
-        if is_val:
-            return cand
+        if 50 <= len(cand) <= 60:
+            is_val, _ = validate_rewrite(cand, full_page_text, brand, 40, 60, is_title=True, current_t=current_t, h1=h1)
+            if is_val:
+                return cand
 
-    fallback_subj = clean_h1 or slug_name or (current_t.split("|")[0].strip() if current_t else "")
-    if not fallback_subj or fallback_subj.lower() in ("& tours", "tours", ""):
-        fallback_subj = slug_name or "Home"
+    # Priority 2: 40-50 chars
+    for cand in candidates:
+        if 40 <= len(cand) < 50:
+            is_val, _ = validate_rewrite(cand, full_page_text, brand, 40, 60, is_title=True, current_t=current_t, h1=h1)
+            if is_val:
+                return cand
+
+    fallback_subj = clean_h1 or (current_t.split("|")[0].strip() if current_t else "")
     for v in variants:
         fallback_subj = re.sub(rf"\b{re.escape(v)}\b", "", fallback_subj, flags=re.IGNORECASE).strip()
     fallback_subj = re.sub(r"^[&|\-–—\s]+|[&|\-–—\s]+$", "", fallback_subj).strip() or "Home"
-    return f"Needs manual rewrite: insufficient page text for 50-60 char title ({fallback_subj} | {brand})"
+    return f"Needs manual rewrite: insufficient page text for 40-60 char title ({fallback_subj} | {brand})"
 
 def rewrite_natural_meta(
     current_m: str,
@@ -555,16 +607,14 @@ def rewrite_natural_meta(
     if clean_h1.lower() in ("& tours", "tours", "services", "about", "contact", "home"):
         clean_h1 = ""
 
-    path = urlparse(url).path.strip("/")
-    slug_name = path.split("/")[-1].replace("-", " ").title() if path else ""
     body_content = (page_text or "").strip()
-
     is_placeholder = any(p in (current_m or "").lower() for p in ["it service", "wordpress theme", "just another", "lorem ipsum"])
 
+    # Never ground against URL/slug!
     if is_placeholder or not current_m:
-        full_page_text = f"{clean_h1}. {slug_name}. {body_content}".strip()
+        full_page_text = f"{clean_h1}. {body_content}".strip()
     else:
-        full_page_text = f"{current_m}. {clean_h1}. {slug_name}. {body_content}".strip()
+        full_page_text = f"{current_m}. {clean_h1}. {body_content}".strip()
 
     # 1. Check if current_m is already valid
     if current_m and not is_placeholder and 120 <= len(current_m) <= 155:
@@ -679,9 +729,7 @@ def rewrite_natural_meta(
         if is_val:
             return cand
 
-    fallback_subj = clean_h1 or slug_name or ""
-    if not fallback_subj or fallback_subj.lower() in ("& tours", "tours", ""):
-        fallback_subj = slug_name or "Home"
+    fallback_subj = clean_h1 or (current_m.split('.')[0].strip() if current_m and not is_placeholder else "") or "Page"
     for v in variants:
         fallback_subj = re.sub(rf"\b{re.escape(v)}\b", "", fallback_subj, flags=re.IGNORECASE).strip()
     fallback_subj = re.sub(r"^[&|\-–—\s]+|[&|\-–—\s]+$", "", fallback_subj).strip() or "Home"

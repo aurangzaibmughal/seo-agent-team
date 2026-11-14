@@ -484,7 +484,7 @@ class ReportExporter:
         story.append(Spacer(1, 10))
 
         # 4. Content Briefs & On-Page Rewrites (M4)
-        story.append(Paragraph(f"{sec_num}. Content Briefs & On-Page Title/Meta Rewrites", h2_style))
+        story.append(Paragraph(f"{sec_num}. Content Briefs & On-Page Title/Meta Rewrites (Suggested drafts: review before use)", h2_style))
         sec_num += 1
         briefs = content_data.get("briefs", []) if content_data else []
         rewrites = content_data.get("rewrites", []) if content_data else []
@@ -522,15 +522,15 @@ class ReportExporter:
             story.append(Spacer(1, 6))
 
         if rewrites:
-            story.append(Paragraph("<b>On-Page Metadata Rewrites (needs human review):</b>", meta_style))
-            rw_rows = [["URL", "Current Title / Meta", "Suggested Title / Meta [needs human review]"]]
+            story.append(Paragraph("<b>On-Page Metadata Rewrites (Suggested drafts: review before use):</b>", meta_style))
+            rw_rows = [["URL", "Current Title / Meta", "Suggested Title / Meta (Suggested drafts: review before use)"]]
             for rw in rewrites[:4]:
                 c_title = html.escape(str(rw.get('current_title', '')))
                 c_meta = html.escape(str(rw.get('current_meta', '')))
                 s_title = html.escape(str(rw.get('suggested_title', '')))
                 s_meta = html.escape(str(rw.get('suggested_meta', '')))
                 curr = f"<b>T:</b> {c_title}<br/><b>M:</b> {c_meta}"
-                sugg = f"<b>[needs human review]</b><br/><b>T:</b> {s_title} ({len(rw.get('suggested_title', ''))} chars)<br/><b>M:</b> {s_meta} ({len(rw.get('suggested_meta', ''))} chars)"
+                sugg = f"<b>[Suggested drafts: review before use]</b><br/><b>T:</b> {s_title} ({len(rw.get('suggested_title', ''))} chars)<br/><b>M:</b> {s_meta} ({len(rw.get('suggested_meta', ''))} chars)"
                 rw_rows.append([
                     Paragraph(html.escape(str(rw.get("url", ""))), body_style),
                     Paragraph(curr, body_style),
@@ -839,12 +839,12 @@ class ReportExporter:
             if content_data:
                 for rw in content_data.get("rewrites", []):
                     writer.writerow([
-                        "On-Page Rewrite",
+                        "On-Page Rewrite (Suggested drafts: review before use)",
                         rw.get("url"),
                         f"Cur Title: {rw.get('current_title')}",
                         f"New Title: {rw.get('suggested_title')}",
                         f"New Meta: {rw.get('suggested_meta')}",
-                        "Char bounds enforced by code | Status: needs human review"
+                        "Char bounds enforced by code | Status: Suggested drafts: review before use"
                     ])
                 for il in content_data.get("internal_links", []):
                     writer.writerow([
@@ -1079,7 +1079,7 @@ class ReportExporter:
         if content_data:
             for rw in content_data.get("rewrites", []):
                 ws_cont.append([
-                    "Rewrite [needs human review]",
+                    "Rewrite [Suggested drafts: review before use]",
                     rw.get("url"),
                     rw.get("suggested_title"),
                     rw.get("suggested_meta"),
