@@ -300,6 +300,42 @@ def init_db():
             FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS review_items (
+            id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            item_ref TEXT NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            reviewer_note TEXT DEFAULT '',
+            original_payload_json TEXT DEFAULT '{}',
+            edited_payload_json TEXT DEFAULT '{}',
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS review_events (
+            id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            old_value TEXT,
+            new_value TEXT,
+            reviewer_note TEXT,
+            timestamp TEXT NOT NULL,
+            FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
+        )
+    """)
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN sitemap_entries_json TEXT DEFAULT '[]'")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN completeness_status TEXT DEFAULT 'complete'")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 

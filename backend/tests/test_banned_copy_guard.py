@@ -75,3 +75,20 @@ def snippet():
     violations = scan_ast_for_banned_copy(tree, filename="dummy_str.py", banned_words=banned_words)
     assert len(violations) >= 1
     assert any("official" in v for v in violations)
+
+def test_banned_copy_startup_loader_raises_on_missing_file(tmp_path):
+    """Proves _load_banned_copy raises RuntimeError when the config file does not exist."""
+    import pytest
+    from app.agents.content_agent import _load_banned_copy
+    missing_file = tmp_path / "non_existent_banned_copy.json"
+    with pytest.raises(RuntimeError, match="not found"):
+        _load_banned_copy(cfg_path=missing_file)
+
+def test_banned_copy_startup_loader_raises_on_empty_file(tmp_path):
+    """Proves _load_banned_copy raises RuntimeError when the config file is empty or contains empty list."""
+    import pytest
+    from app.agents.content_agent import _load_banned_copy
+    empty_file = tmp_path / "empty_banned_copy.json"
+    empty_file.write_text("[]", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="empty or invalid"):
+        _load_banned_copy(cfg_path=empty_file)

@@ -129,17 +129,55 @@ DANGLING_STOPWORDS = {
     "over", "under", "via", "about", "against", "among", "through", "during"
 }
 
-def _load_banned_copy() -> Set[str]:
-    cfg_file = Path(__file__).resolve().parent.parent / "config" / "banned_copy.json"
-    if cfg_file.exists():
-        try:
-            with open(cfg_file, "r", encoding="utf-8") as f:
-                return set(json.load(f))
-        except Exception:
-            return set()
-    return set()
+def _load_banned_copy(cfg_path: Optional[Path] = None) -> Set[str]:
+    cfg_file = cfg_path or (Path(__file__).resolve().parent.parent / "config" / "banned_copy.json")
+    if not cfg_file.exists():
+        raise RuntimeError(f"Required banned copy config file not found: {cfg_file}")
+    try:
+        with open(cfg_file, "r", encoding="utf-8") as f:
+            words = json.load(f)
+            if not words or not isinstance(words, list) or len(words) == 0:
+                raise RuntimeError(f"Banned copy config {cfg_file} is empty or invalid format")
+            return set(words)
+    except Exception as e:
+        if isinstance(e, RuntimeError):
+            raise
+        raise RuntimeError(f"Failed to load banned copy config {cfg_file}: {e}")
 
 BANNED_WORDS = _load_banned_copy()
+
+def get_brand_variants(brand: str) -> List[str]:
+    """Returns brand forms ordered from longest to shortest:
+    e.g. 'Al Ghaffar Travel' -> ['Al Ghaffar Travel', 'Al Ghaffar']
+    """
+    if not brand:
+        return []
+    cleaned = brand.strip()
+    variants = [cleaned]
+    short = re.sub(
+        r"\s+(?:Travel|Tours|Agency|Services|Solutions|Platform|Technologies|Tech|Corp|LLC|Inc|Pvt|Ltd|Digital|Dentistry|Dental|Clinic|Studio|Labs)\b.*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE
+    ).strip()
+    if short and short.lower() != cleaned.lower() and len(short) >= 3:
+        variants.append(short)
+    return sorted(variants, key=len, reverse=True)
+
+def count_brand_occurrences(text: str, brand: str) -> Tuple[int, List[str]]:
+    """Counts occurrences of brand in full or short form without double-counting nested matches."""
+    if not brand or not text:
+        return 0, []
+    variants = get_brand_variants(brand)
+    temp = text
+    found_forms = []
+    for idx, v in enumerate(variants):
+        pattern = rf"\b{re.escape(v)}\b"
+        matches = list(re.finditer(pattern, temp, flags=re.IGNORECASE))
+        if matches:
+            found_forms.extend([v] * len(matches))
+            temp = re.sub(pattern, f" __BRAND_{idx}__ ", temp, flags=re.IGNORECASE)
+    return len(found_forms), found_forms
 
 def resolve_site_brand(crawl_pages: List[Dict[str, Any]], target_url: str = "") -> str:
     """Resolves ONE consistent brand for the website following strict precedence:
@@ -243,16 +281,27 @@ def validate_rewrite(
     brand: str,
     min_len: int,
     max_len: int,
-    is_title: bool = False
+    is_title: bool = False,
+    current_t: str = "",
+    h1: str = ""
 ) -> Tuple[bool, str]:
     """Validates that a title or meta description conforms strictly to:
     1. Length bounds (50-60 for title, 120-155 for meta)
-    2. Brand appears exactly once
-    3. No dangling stopword or punctuation at end
-    4. No repeated words
-    5. No placeholder tokens
-    6. Zero banned marketing copy
-    7. Grounding check: >= 80% of non-stopword content words must appear in page_text
+    2. Brand occurrences:
+       - Title: exactly one occurrence across all forms (full name and short form)
+       - Meta: at most one occurrence across all forms
+    3. No '- {ShortBrand}' or brand delimiter padding
+    4. Fragments like '& Tours' must not be used as H1 or subject
+    5. Meta description formatting:
+       - 1-2 complete sentences
+       - Must not start with the title or H1
+       - Must end with punctuation (. or !)
+       - No pipe '|' delimiter
+    6. No dangling stopword or punctuation at end
+    7. No repeated consecutive words
+    8. No placeholder tokens
+    9. Zero banned marketing copy
+    10. Grounding check: >= 80% non-stopword content words must appear in page_text
     """
     if not text:
         return False, "Empty text"
@@ -263,14 +312,69 @@ def validate_rewrite(
     if len(text) > max_len:
         return False, f"Length {len(text)} exceeds maximum {max_len}"
 
-    # 2. Brand check: exactly once
-    b_lower = brand.lower().strip()
-    t_lower = text.lower()
-    if not b_lower or t_lower.count(b_lower) != 1:
-        return False, f"Brand '{brand}' must appear exactly once in rewrite (found {t_lower.count(b_lower)})"
+    # 2. Brand occurrences across all forms (full name and short form, case-insensitive)
+    variants = get_brand_variants(brand)
+    total_brand_count, found_forms = count_brand_occurrences(text, brand)
+    if is_title:
+        if total_brand_count != 1:
+            return False, f"Brand '{brand}' (or short form) must appear exactly once in title (found {total_brand_count}: {found_forms})"
+    else:
+        if total_brand_count > 1:
+            return False, f"Brand '{brand}' (or short form) must appear at most once in meta (found {total_brand_count}: {found_forms})"
 
-    # 3. No dangling stopword or punctuation at end
-    clean_text = text.rstrip(" .")
+    # 3. No "- {ShortBrand}" or brand padding patterns
+    for v in variants:
+        if re.search(rf"[|\-–—]\s*{re.escape(v)}\s*[|\-–—]", text, flags=re.IGNORECASE):
+            return False, f"Brand padding delimiter pattern detected with '{v}'"
+    # For short brand padding (e.g. "- Al Ghaffar"), check on text where full brand is masked
+    text_masked = re.sub(rf"\b{re.escape(brand)}\b", "__FULL_BRAND__", text, flags=re.IGNORECASE)
+    for v in variants:
+        if v.lower() != brand.lower():
+            if re.search(rf"[|\-–—]\s*{re.escape(v)}\b", text_masked, flags=re.IGNORECASE):
+                return False, f"Short brand padding '- {v}' detected"
+
+    # 4. Fragments like "& Tours" must not be used as subject or H1
+    if re.search(r"\b&\s*Tours\b", text, flags=re.IGNORECASE) and not re.search(r"\bTravel\s*&\s*Tours\b", text, flags=re.IGNORECASE):
+        return False, "Dangling fragment '& Tours' must not be used"
+    if re.search(r"^[&|\-–—\s]+", text) or re.search(r"[|\-–—]\s*[&|\-–—]", text):
+        return False, "Dangling fragment delimiter detected in rewrite"
+
+    # 5. Meta description formatting rules
+    if not is_title:
+        # No pipe '|' in meta description
+        if "|" in text:
+            return False, "Pipe delimiter '|' not allowed in meta description"
+
+        # Must end with punctuation (. or !)
+        clean_stripped = text.strip()
+        if not clean_stripped.endswith((".", "!")):
+            return False, "Meta description must end with punctuation (period or exclamation mark)"
+
+        # Must NOT start with title or H1
+        if current_t:
+            t_main = re.split(r"[|–—\-]", current_t)[0].strip()
+            if len(t_main) >= 4 and clean_stripped.lower().startswith(t_main.lower()):
+                return False, f"Meta description must not start with the title ('{t_main}')"
+        if h1:
+            h1_main = re.sub(r"^[&|\-–—\s]+", "", h1).strip()
+            for v in variants:
+                h1_main = re.sub(rf"\b{re.escape(v)}\b", "", h1_main, flags=re.IGNORECASE).strip()
+            h1_main = re.sub(r"^[&|\-–—\s]+|[&|\-–—\s]+$", "", h1_main).strip()
+            if len(h1_main) >= 4 and clean_stripped.lower().startswith(h1_main.lower()):
+                return False, f"Meta description must not start with H1 ('{h1_main}')"
+
+        # 1-2 complete sentences
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", clean_stripped) if s.strip()]
+        if not (1 <= len(sentences) <= 2):
+            return False, f"Meta must consist of 1-2 complete sentences (found {len(sentences)})"
+        for s in sentences:
+            if len(s.split()) < 4:
+                return False, f"Sentence too short to be complete: '{s}'"
+            if not (s[0].isupper() or s[0].isdigit() or s[0] in ('"', "'")):
+                return False, f"Sentence must start with a capital letter: '{s}'"
+
+    # 6. No dangling stopword or punctuation at end
+    clean_text = text.rstrip(" .!?,")
     last_word_match = re.search(r"([A-Za-z0-9\-]+)[^A-Za-z0-9\-]*$", clean_text)
     if not last_word_match:
         return False, "No word found at end of text"
@@ -280,32 +384,34 @@ def validate_rewrite(
     if text[-1] in (",", "-", "|", "&", "/", "\\", ":", ";", ">", "<"):
         return False, f"Dangling punctuation '{text[-1]}' at end of rewrite"
 
-    # 4. No repeated words
+    # 7. No repeated consecutive words
+    t_lower = text.lower()
     words = re.findall(r"\b[A-Za-z0-9\-]+\b", t_lower)
     for i in range(len(words) - 1):
         if words[i] == words[i + 1] and len(words[i]) > 2:
             return False, f"Repeated consecutive word '{words[i]}'"
 
-    # 5. No placeholder tokens
+    # 8. No placeholder tokens
     placeholders = ["{brand}", "{h1}", "undefined", "null", "[object]", "lorem ipsum", "todo", "needs input", "%s", "{"]
     for ph in placeholders:
         if ph in t_lower:
             return False, f"Placeholder token '{ph}' detected"
 
-    # 6. Zero banned marketing copy unless already present in page text
+    # 9. Zero banned marketing copy unless already present in page text
     page_text_lower = page_text.lower()
     for banned in BANNED_WORDS:
         if re.search(rf"\b{re.escape(banned)}\b", t_lower) and banned not in page_text_lower:
             return False, f"Banned marketing copy detected: '{banned}'"
 
-    # 7. Grounding check: >= 80% non-stopword content words must appear in page_text
-    brand_tokens = set(re.findall(r"\b\w+\b", b_lower))
+    # 10. Grounding check: >= 80% non-stopword content words must appear in page_text
+    all_brand_tokens = set()
+    for v in variants:
+        all_brand_tokens.update(re.findall(r"\b\w+\b", v.lower()))
     content_words = [
         w for w in words
-        if w not in DANGLING_STOPWORDS and w not in brand_tokens and not w.isdigit() and len(w) > 2
+        if w not in DANGLING_STOPWORDS and w not in all_brand_tokens and not w.isdigit() and len(w) > 2
     ]
     if content_words:
-        page_text_lower = page_text.lower()
         grounded_count = sum(1 for w in content_words if w in page_text_lower)
         ratio = grounded_count / len(content_words)
         if ratio < 0.80:
@@ -325,10 +431,17 @@ def rewrite_natural_title(
     using ONLY terms found in the page text (or fails closed).
     """
     brand = brand or extract_brand_from_page(url, current_t, h1)
+    variants = get_brand_variants(brand)
+
     clean_h1 = (h1 or "").strip()
-    clean_h1 = re.sub(rf"\s*[|\-–—]\s*{re.escape(brand)}.*$", "", clean_h1, flags=re.IGNORECASE).strip()
-    if brand.lower() in clean_h1.lower():
-        clean_h1 = re.sub(rf"^{re.escape(brand)}\s*(?:&|and|–|-|—)?\s*", "", clean_h1, flags=re.IGNORECASE).strip()
+    for v in variants:
+        clean_h1 = re.sub(rf"\b{re.escape(v)}\b", "", clean_h1, flags=re.IGNORECASE).strip()
+    clean_h1 = re.sub(r"^[&|\-–—\s]+|[&|\-–—\s]+$", "", clean_h1).strip()
+    if clean_h1.lower() in ("& tours", "tours", "services", "about", "contact", "home"):
+        clean_h1 = ""
+    if len(clean_h1.split()) <= 1 and clean_h1.lower() in ("tours", "services", "packages", "deals", "page"):
+        clean_h1 = ""
+
     path = urlparse(url).path.strip("/")
     slug_name = path.split("/")[-1].replace("-", " ").title() if path else ""
 
@@ -337,7 +450,7 @@ def rewrite_natural_title(
 
     # Check if current title is already valid
     if current_t and 50 <= len(current_t) <= 60:
-        is_val, _ = validate_rewrite(current_t, full_page_text, brand, 50, 60, is_title=True)
+        is_val, _ = validate_rewrite(current_t, full_page_text, brand, 50, 60, is_title=True, current_t=current_t, h1=h1)
         if is_val:
             return current_t
 
@@ -348,9 +461,13 @@ def rewrite_natural_title(
         segs = [s.strip() for s in re.split(r"[|–—\-]", current_t) if s.strip()]
         non_brand_segs = []
         for s in segs:
-            s_clean = re.sub(rf"\s*{re.escape(brand)}\s*", " ", s, flags=re.IGNORECASE).strip()
-            if len(s_clean) > 2 and s_clean.lower() != brand.lower():
-                non_brand_segs.append(s_clean)
+            s_clean = s.strip()
+            for v in variants:
+                s_clean = re.sub(rf"\b{re.escape(v)}\b", " ", s_clean, flags=re.IGNORECASE).strip()
+            s_clean = re.sub(r"^[&|\-–—\s]+|[&|\-–—\s]+$", "", s_clean).strip()
+            if len(s_clean) > 2 and not any(s_clean.lower() == v.lower() for v in variants):
+                if s_clean.lower() not in ("tours", "& tours", "services", "home", "about", "contact"):
+                    non_brand_segs.append(s_clean)
 
         for seg in non_brand_segs:
             cand = f"{seg} | {brand}"
@@ -363,13 +480,13 @@ def rewrite_natural_title(
                 if seg_words:
                     sub_seg = " ".join(seg_words).rstrip(" ,-–—")
                     candidates.append(f"{sub_seg} | {brand}")
-            if len(non_brand_segs) >= 2:
-                candidates.append(f"{non_brand_segs[0]} - {non_brand_segs[1]} | {brand}")
+        if len(non_brand_segs) >= 2:
+            candidates.append(f"{non_brand_segs[0]} and {non_brand_segs[1]} | {brand}")
+            candidates.append(f"{non_brand_segs[0]} - {non_brand_segs[1]} | {brand}")
 
     # 2. H1 + Brand
     if clean_h1:
         candidates.append(f"{clean_h1} | {brand}")
-        candidates.append(f"{clean_h1} - {brand}")
 
     # 3. Slug title + Brand
     if slug_name and slug_name.lower() not in (clean_h1 or "").lower():
@@ -378,11 +495,14 @@ def rewrite_natural_title(
             candidates.append(f"{clean_h1} - {slug_name} | {brand}")
 
     # 4. Form combinations from phrases appearing in body text
-    body_phrases = [p.strip() for p in re.split(r"[,;.\n]+", body_content) if len(p.strip()) > 10]
+    body_phrases = [p.strip() for p in re.split(r"[,;.\n]+", body_content) if len(p.strip()) > 8]
     for bp in body_phrases:
-        bp_clean = re.sub(rf"\s*{re.escape(brand)}\s*", " ", bp, flags=re.IGNORECASE).strip()
+        bp_clean = bp.strip()
+        for v in variants:
+            bp_clean = re.sub(rf"\b{re.escape(v)}\b", " ", bp_clean, flags=re.IGNORECASE).strip()
         bp_clean = re.sub(r"^(?:we provide|welcome to|our company provides|explore)\s+", "", bp_clean, flags=re.IGNORECASE).strip()
-        if len(bp_clean) > 5:
+        bp_clean = re.sub(r"^[&|\-–—\s]+|[&|\-–—\s]+$", "", bp_clean).strip()
+        if len(bp_clean) > 5 and not any(bp_clean.lower() == v.lower() for v in variants):
             cand = f"{bp_clean.title()} | {brand}"
             if 50 <= len(cand) <= 60:
                 candidates.append(cand)
@@ -391,10 +511,10 @@ def rewrite_natural_title(
                 if 50 <= len(cand2) <= 60:
                     candidates.append(cand2)
 
-    # 5. Form combinations from words appearing in page text
+    # 5. Expand short candidates using modifier keywords appearing in page text
     for cand in list(candidates):
         if len(cand) < 50:
-            for modifier in ["from Karachi", "in Karachi", "Overview", "Guide", "Services"]:
+            for modifier in ["from Karachi", "in Karachi", "Overview", "Guide", "Services", "Packages", "Deals"]:
                 if modifier.lower() in full_page_text.lower():
                     base_part = cand.split(" | ")[0]
                     expanded = f"{base_part} {modifier} | {brand}"
@@ -402,13 +522,16 @@ def rewrite_natural_title(
                         candidates.append(expanded)
 
     for cand in candidates:
-        is_val, _ = validate_rewrite(cand, full_page_text, brand, 50, 60, is_title=True)
+        is_val, _ = validate_rewrite(cand, full_page_text, brand, 50, 60, is_title=True, current_t=current_t, h1=h1)
         if is_val:
             return cand
 
-    fallback_subj = clean_h1 or slug_name or (current_t.split("|")[0].strip() if current_t else "Page")
-    if brand.lower() in fallback_subj.lower():
-        fallback_subj = re.sub(rf"\s*{re.escape(brand)}\s*", " ", fallback_subj, flags=re.IGNORECASE).strip() or "Page"
+    fallback_subj = clean_h1 or slug_name or (current_t.split("|")[0].strip() if current_t else "")
+    if not fallback_subj or fallback_subj.lower() in ("& tours", "tours", ""):
+        fallback_subj = slug_name or "Home"
+    for v in variants:
+        fallback_subj = re.sub(rf"\b{re.escape(v)}\b", "", fallback_subj, flags=re.IGNORECASE).strip()
+    fallback_subj = re.sub(r"^[&|\-–—\s]+|[&|\-–—\s]+$", "", fallback_subj).strip() or "Home"
     return f"Needs manual rewrite: insufficient page text for 50-60 char title ({fallback_subj} | {brand})"
 
 def rewrite_natural_meta(
@@ -424,7 +547,14 @@ def rewrite_natural_meta(
     using ONLY facts found on the page text, or fails closed.
     """
     brand = brand or extract_brand_from_page(url, "", h1, current_m)
+    variants = get_brand_variants(brand)
     clean_h1 = (h1 or "").strip()
+    for v in variants:
+        clean_h1 = re.sub(rf"\b{re.escape(v)}\b", "", clean_h1, flags=re.IGNORECASE).strip()
+    clean_h1 = re.sub(r"^[&|\-–—\s]+|[&|\-–—\s]+$", "", clean_h1).strip()
+    if clean_h1.lower() in ("& tours", "tours", "services", "about", "contact", "home"):
+        clean_h1 = ""
+
     path = urlparse(url).path.strip("/")
     slug_name = path.split("/")[-1].replace("-", " ").title() if path else ""
     body_content = (page_text or "").strip()
@@ -438,7 +568,7 @@ def rewrite_natural_meta(
 
     # 1. Check if current_m is already valid
     if current_m and not is_placeholder and 120 <= len(current_m) <= 155:
-        is_val, _ = validate_rewrite(current_m, full_page_text, brand, 120, 155, is_title=False)
+        is_val, _ = validate_rewrite(current_m, full_page_text, brand, 120, 155, is_title=False, current_t="", h1=h1)
         if is_val:
             return current_m
 
@@ -463,20 +593,14 @@ def rewrite_natural_meta(
                 if not sub_m.endswith("."):
                     sub_m += "."
 
-                first_token = brand.split()[0] if brand else ""
-                if first_token and re.search(rf"\b{re.escape(first_token)}\b", sub_m, flags=re.IGNORECASE) and brand.lower() not in sub_m.lower():
-                    sub_m_brand = re.sub(rf"\b{re.escape(first_token)}\b", brand, sub_m, count=1, flags=re.IGNORECASE)
-                    if 120 <= len(sub_m_brand) <= 155:
-                        candidates.append(sub_m_brand)
-
-                if brand.lower() in sub_m.lower():
+                total_brand, _ = count_brand_occurrences(sub_m, brand)
+                if total_brand == 1:
                     if 120 <= len(sub_m) <= 155:
                         candidates.append(sub_m)
-                else:
-                    for connector in [f" with {brand}.", f" - {brand}."]:
-                        cand = f"{sub_m.rstrip('.')}{connector}"
-                        if 120 <= len(cand) <= 155:
-                            candidates.append(cand)
+                elif total_brand == 0:
+                    cand = f"{sub_m.rstrip('.')} with {brand}."
+                    if 120 <= len(cand) <= 155:
+                        candidates.append(cand)
 
             # Word-by-word trim from end of clean_m
             m_words = clean_m.split()
@@ -489,63 +613,78 @@ def rewrite_natural_meta(
                 sub_w = " ".join(m_words).rstrip(" ,-–—")
                 if not sub_w.endswith("."):
                     sub_w += "."
-                first_token = brand.split()[0] if brand else ""
-                if first_token and re.search(rf"\b{re.escape(first_token)}\b", sub_w, flags=re.IGNORECASE) and brand.lower() not in sub_w.lower():
-                    sub_wb = re.sub(rf"\b{re.escape(first_token)}\b", brand, sub_w, count=1, flags=re.IGNORECASE)
-                    if 120 <= len(sub_wb) <= 155:
-                        candidates.append(sub_wb)
-                if brand.lower() in sub_w.lower() and 120 <= len(sub_w) <= 155:
+                total_brand, _ = count_brand_occurrences(sub_w, brand)
+                if total_brand == 1 and 120 <= len(sub_w) <= 155:
                     candidates.append(sub_w)
-        elif brand.lower() not in clean_m.lower():
-            cand = f"{clean_m.rstrip('.')} with {brand}."
-            if 120 <= len(cand) <= 155:
-                candidates.append(cand)
-            cand2 = f"{clean_m.rstrip('.')} - {brand}."
-            if 120 <= len(cand2) <= 155:
-                candidates.append(cand2)
-        elif 120 <= len(clean_m) <= 155:
-            candidates.append(clean_m)
-
-    # Extract sentences from page body text
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", full_page_text) if len(s.strip()) > 20]
-    for s in sentences:
-        s_clean = s.strip()
-        if not s_clean.endswith("."):
-            s_clean += "."
-
-        if brand.lower() in s_clean.lower():
-            if 120 <= len(s_clean) <= 155:
-                candidates.append(s_clean)
+                elif total_brand == 0:
+                    cand = f"{sub_w.rstrip('.')} with {brand}."
+                    if 120 <= len(cand) <= 155:
+                        candidates.append(cand)
         else:
-            for connector in [f" with {brand}.", f" - {brand}."]:
-                cand = f"{s_clean.rstrip('.')}{connector}"
+            total_brand, _ = count_brand_occurrences(clean_m, brand)
+            if total_brand == 0:
+                cand = f"{clean_m.rstrip('.')} with {brand}."
                 if 120 <= len(cand) <= 155:
                     candidates.append(cand)
+            elif total_brand == 1 and 120 <= len(clean_m) <= 155:
+                candidates.append(clean_m)
 
-    # Try combining two short sentences from page text
-    for i in range(len(sentences) - 1):
-        s1 = sentences[i].rstrip(".")
-        s2 = sentences[i + 1].rstrip(".")
-        combined = f"{s1}. {s2}."
-        if brand.lower() in combined.lower():
-            if 120 <= len(combined) <= 155:
-                candidates.append(combined)
-        else:
-            cand = f"{s1}. {s2} - {brand}."
+    # 2. Extract genuine sentences from body content ONLY
+    clean_body_lines = [line.strip() for line in body_content.splitlines() if "|" not in line]
+    clean_body = " ".join(clean_body_lines)
+    raw_sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", clean_body) if len(s.strip()) > 15]
+
+    valid_sentences = []
+    for s in raw_sentences:
+        s_clean = s.strip()
+        if "|" in s_clean or re.search(r"^[&|\-–—\s]+", s_clean):
+            continue
+        if not s_clean.endswith("."):
+            s_clean += "."
+        valid_sentences.append(s_clean)
+
+    # Try single sentence + connector
+    for s in valid_sentences:
+        total_brand, _ = count_brand_occurrences(s, brand)
+        if total_brand == 1:
+            if 120 <= len(s) <= 155:
+                candidates.append(s)
+        elif total_brand == 0:
+            cand = f"{s.rstrip('.')} with {brand}."
             if 120 <= len(cand) <= 155:
                 candidates.append(cand)
+
+    # Try combining two consecutive body sentences
+    for i in range(len(valid_sentences) - 1):
+        s1 = valid_sentences[i].rstrip(".")
+        s2 = valid_sentences[i + 1].rstrip(".")
+        cand_pair = f"{s1}. {s2}."
+        total_brand, _ = count_brand_occurrences(cand_pair, brand)
+        if total_brand == 1:
+            if 120 <= len(cand_pair) <= 155:
+                candidates.append(cand_pair)
+        elif total_brand == 0:
+            cand_pair_brand = f"{s1} with {brand}. {s2}."
+            if 120 <= len(cand_pair_brand) <= 155:
+                candidates.append(cand_pair_brand)
+            cand_pair_brand2 = f"{s1}. {s2} with {brand}."
+            if 120 <= len(cand_pair_brand2) <= 155:
+                candidates.append(cand_pair_brand2)
 
     if "ai search optimization" in (current_m or "").lower():
         candidates.sort(key=lambda c: "ai search optimization" in c.lower(), reverse=True)
 
     for cand in candidates:
-        is_val, _ = validate_rewrite(cand, full_page_text, brand, 120, 155, is_title=False)
+        is_val, _ = validate_rewrite(cand, full_page_text, brand, 120, 155, is_title=False, current_t="", h1=h1)
         if is_val:
             return cand
 
-    fallback_subj = clean_h1 or slug_name or "Page"
-    if brand.lower() in fallback_subj.lower():
-        fallback_subj = re.sub(rf"\s*{re.escape(brand)}\s*", " ", fallback_subj, flags=re.IGNORECASE).strip() or "Page"
+    fallback_subj = clean_h1 or slug_name or ""
+    if not fallback_subj or fallback_subj.lower() in ("& tours", "tours", ""):
+        fallback_subj = slug_name or "Home"
+    for v in variants:
+        fallback_subj = re.sub(rf"\b{re.escape(v)}\b", "", fallback_subj, flags=re.IGNORECASE).strip()
+    fallback_subj = re.sub(r"^[&|\-–—\s]+|[&|\-–—\s]+$", "", fallback_subj).strip() or "Home"
     return f"Needs manual rewrite: insufficient page text to generate 120-155 character meta without inventing copy ({fallback_subj} | {brand})."
 
 def extract_candidate_anchor(text: str, max_words: int = 6) -> Optional[str]:

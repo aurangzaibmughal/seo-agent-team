@@ -2,7 +2,8 @@ import re
 from pathlib import Path
 from bs4 import BeautifulSoup
 from app.agents.content_agent import (
-    resolve_site_brand, validate_rewrite, rewrite_natural_title, rewrite_natural_meta
+    resolve_site_brand, validate_rewrite, rewrite_natural_title, rewrite_natural_meta,
+    count_brand_occurrences
 )
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -178,8 +179,10 @@ def test_rewrites_quality_non_travel_fixtures():
         h1_tag = soup.find("h1")
         h1 = h1_tag.get_text().strip() if h1_tag else ""
         body_text = soup.body.get_text().strip() if soup.body else ""
+        og_tag = soup.find("meta", attrs={"property": "og:site_name"})
+        og_site_name = og_tag["content"].strip() if og_tag and "content" in og_tag.attrs else ""
 
-        page = {"url": url, "title": cur_t, "meta_desc": cur_m, "h1": h1, "body_text": body_text}
+        page = {"url": url, "title": cur_t, "meta_desc": cur_m, "h1": h1, "body_text": body_text, "og_site_name": og_site_name}
         brand = resolve_site_brand([page], url)
 
         page_text = f"{cur_t} {h1} {body_text}"
@@ -197,7 +200,8 @@ def test_rewrites_quality_non_travel_fixtures():
             assert brand.lower() in new_t.lower()
         if "needs manual rewrite" not in new_m.lower():
             assert 120 <= len(new_m) <= 155
-            assert brand.lower() in new_m.lower()
+            total_b, _ = count_brand_occurrences(new_m, brand)
+            assert total_b <= 1
 
 def test_validator_fails_on_length_violations():
     """Validator must strictly reject titles <50 or >60 and metas <120 or >155."""
@@ -251,8 +255,63 @@ def test_validator_fails_on_banned_marketing_copy():
         assert not valid
         assert "Banned marketing copy" in reason
 
+def test_validator_rejects_old_bad_outputs():
+    """Confirms validator strictly rejects past inaccurate, repetitive, or ungrounded outputs."""
+    brand = "Al Ghaffar Travel"
+    page_text = (
+        "Explore international holiday packages from Karachi. Compare duration and sightseeing options. "
+        "Our services include flight bookings, visa assistance, hotel reservations, and destination management."
+    )
+
+    bad_titles = [
+        "Our Services - Al Ghaffar Services | Al Ghaffar Travel",  # Short brand repetition and padding
+        "Holiday Tour Packages - Al Ghaffar | Al Ghaffar Travel",  # - Al Ghaffar padding
+        "& Tours | Al Ghaffar Travel",                            # Fragment as H1/subject
+        "Hajj, Umrah & Holiday Tour Packages Karachi | Al Ghaffar Travel", # Too long (>60 chars, 63)
+        "Short Title | Al Ghaffar Travel",                         # Too short (<50 chars, 32)
+        "Holiday Tour Packages | Al Ghaffar Travel | Tours",       # Multiple delimiters / fragments
+        "Holiday Tour Packages | Al Ghaffar",                      # Incomplete brand
+    ]
+
+    for bad_t in bad_titles:
+        valid, reason = validate_rewrite(
+            bad_t, page_text, brand, min_len=50, max_len=60, is_title=True, current_t="Holiday Tour Packages | Al Ghaffar", h1="Curated Holiday Packages"
+        )
+        assert not valid, f"Expected title to be REJECTED but passed: '{bad_t}'"
+
+    bad_metas = [
+        # Concatenates title + H1 into sentence with pipe '|', repeated brand forms
+        "Holiday Tour Packages | Al Ghaffar Curated Holiday Packages Explore international holiday packages from Karachi with Al Ghaffar Travel.",
+        # Contains pipe delimiter
+        "Explore top holiday tour packages | Al Ghaffar Travel with family vacation offers and hotel bookings across Sri Lanka and Thailand.",
+        # Starts with title
+        "Holiday Tour Packages are available from Karachi with Al Ghaffar Travel covering international flights and hotel bookings.",
+        # Starts with H1
+        "Curated Holiday Packages are available from Karachi with Al Ghaffar Travel covering international flights and hotel bookings.",
+        # Uses '- Brand.' padding instead of sentence
+        "Explore international holiday packages from Karachi and compare duration across Sri Lanka and Thailand - Al Ghaffar Travel.",
+        # Fragment '& Tours' used
+        "Needs manual rewrite: insufficient page text to generate 120-155 character meta without inventing copy (& Tours | Al Ghaffar Travel).",
+        # Missing terminating punctuation
+        "Explore international holiday packages from Karachi compare duration and plan your family vacation with Al Ghaffar Travel",
+        # Multiple brand occurrences
+        "Al Ghaffar Travel offers international holiday packages from Karachi with Al Ghaffar Travel for family vacations.",
+        # Too short (<120)
+        "Explore international holiday packages from Karachi with Al Ghaffar Travel.",
+        # Too long (>155)
+        "Explore international holiday packages from Karachi with Al Ghaffar Travel and compare comprehensive duration and sightseeing options across Sri Lanka, Thailand, and Malaysia with our consultants.",
+    ]
+
+    for bad_m in bad_metas:
+        valid, reason = validate_rewrite(
+            bad_m, page_text, brand, min_len=120, max_len=155, is_title=False, current_t="Holiday Tour Packages | Al Ghaffar", h1="Curated Holiday Packages"
+        )
+        assert not valid, f"Expected meta to be REJECTED but passed: '{bad_m}' (reason: {reason})"
+
 def test_generate_alghaffar_b01_table_markdown():
-    """Generates the grounded B-01 table markdown for all 13 Al Ghaffar fixture pages."""
+    """Generates the grounded B-01 table markdown for all 13 Al Ghaffar fixture pages,
+    as well as output for Dental Clinic and SaaS fixtures.
+    """
     brand = resolve_site_brand(AL_GHAFFAR_13_PAGES, "https://www.alghaffar.com.pk/")
     rows = []
     for page in AL_GHAFFAR_13_PAGES:
@@ -277,3 +336,26 @@ def test_generate_alghaffar_b01_table_markdown():
     ])
     print("\n--- GENERATED B-01 TABLE ---\n" + table_md + "\n----------------------------\n")
     assert len(rows) == 13
+
+    # Non-travel fixtures (Dental & SaaS)
+    non_travel_outputs = []
+    for fname, url in [("dental-fixture.html", "https://clifton-dental.example.com/"), ("saas-fixture.html", "https://cloudmetrics.example.com/")]:
+        fpath = FIXTURES_DIR / "generic" / fname
+        html = fpath.read_text(encoding="utf-8")
+        soup = BeautifulSoup(html, "html.parser")
+        cur_t = soup.title.string.strip() if soup.title else ""
+        meta_tag = soup.find("meta", attrs={"name": "description"})
+        cur_m = meta_tag["content"].strip() if meta_tag and "content" in meta_tag.attrs else ""
+        h1_tag = soup.find("h1")
+        h1 = h1_tag.get_text().strip() if h1_tag else ""
+        body_text = soup.body.get_text().strip() if soup.body else ""
+        og_tag = soup.find("meta", attrs={"property": "og:site_name"})
+        og_site_name = og_tag["content"].strip() if og_tag and "content" in og_tag.attrs else ""
+        page = {"url": url, "title": cur_t, "meta_desc": cur_m, "h1": h1, "body_text": body_text, "og_site_name": og_site_name}
+        brand = resolve_site_brand([page], url)
+        page_text = f"{cur_t} {h1} {body_text}"
+        new_t = rewrite_natural_title(cur_t, h1, url, page_text=page_text, brand=brand)
+        new_m = rewrite_natural_meta(cur_m, h1, url=url, page_text=page_text, brand=brand)
+        non_travel_outputs.append(f"**Fixture:** `{fname}`\n- **Resolved Brand:** `{brand}`\n- **Recommended Title:** `{new_t}` ({len(new_t)} chars)\n- **Recommended Meta:** `{new_m}` ({len(new_m)} chars)")
+
+    print("\n--- NON-TRAVEL FIXTURES REWRITE OUTPUT ---\n" + "\n\n".join(non_travel_outputs) + "\n------------------------------------------\n")
