@@ -51,6 +51,9 @@ def init_db():
             sitemap_found INTEGER DEFAULT 0,
             error TEXT,
             cost_usd REAL DEFAULT 0.0,
+            incomplete_reasons_json TEXT DEFAULT '[]',
+            completeness_status TEXT DEFAULT 'complete',
+            sitemap_entries_json TEXT DEFAULT '[]',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -334,6 +337,10 @@ def init_db():
         pass
     try:
         cursor.execute("ALTER TABLE jobs ADD COLUMN completeness_status TEXT DEFAULT 'complete'")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN incomplete_reasons_json TEXT DEFAULT '[]'")
     except Exception:
         pass
     conn.commit()
