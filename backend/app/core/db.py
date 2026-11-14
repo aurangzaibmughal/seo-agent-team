@@ -49,6 +49,18 @@ def init_db():
             in_sitemap_not_crawled INTEGER DEFAULT 0,
             crawled_not_in_sitemap INTEGER DEFAULT 0,
             sitemap_found INTEGER DEFAULT 0,
+            sitemap_status TEXT DEFAULT 'pending',
+            psi_status TEXT DEFAULT 'pending',
+            is_demo INTEGER DEFAULT 0,
+            competitor_domains TEXT DEFAULT '[]',
+            failed_fetches_json TEXT DEFAULT '[]',
+            crawl_incomplete INTEGER DEFAULT 0,
+            platform TEXT DEFAULT 'unknown',
+            platform_confidence REAL DEFAULT 0.0,
+            detected_platform TEXT DEFAULT 'unknown',
+            detected_platform_confidence REAL DEFAULT 0.0,
+            router_type TEXT DEFAULT 'app',
+            dropped_pages_json TEXT DEFAULT '[]',
             error TEXT,
             cost_usd REAL DEFAULT 0.0,
             incomplete_reasons_json TEXT DEFAULT '[]',
@@ -237,63 +249,41 @@ def init_db():
         )
     """)
 
-    # Auto-migration safety
-    try:
-        cursor.execute("ALTER TABLE agent_runs ADD COLUMN mode TEXT DEFAULT 'fallback'")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE agent_runs ADD COLUMN tokens_prompt INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE agent_runs ADD COLUMN tokens_completion INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE agent_runs ADD COLUMN cost_usd REAL DEFAULT 0.0")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE crawl_pages ADD COLUMN inlinks_count INTEGER DEFAULT 0")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE crawl_pages ADD COLUMN headings_json TEXT DEFAULT '[]'")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE crawl_pages ADD COLUMN text_terms TEXT DEFAULT '[]'")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE crawl_pages ADD COLUMN body_text TEXT DEFAULT ''")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN in_sitemap_not_crawled INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN crawled_not_in_sitemap INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN sitemap_found INTEGER DEFAULT 0")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN psi_status TEXT DEFAULT 'pending'")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN is_demo INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN competitor_domains TEXT DEFAULT '[]'")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN failed_fetches_json TEXT DEFAULT '[]'")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN crawl_incomplete INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN sitemap_status TEXT DEFAULT 'pending'")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE projects ADD COLUMN platform_confidence REAL DEFAULT 0.0")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE jobs ADD COLUMN platform TEXT DEFAULT 'unknown'")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN platform_confidence REAL DEFAULT 0.0")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN detected_platform TEXT DEFAULT 'unknown'")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN detected_platform_confidence REAL DEFAULT 0.0")
-        cursor.execute("ALTER TABLE jobs ADD COLUMN router_type TEXT DEFAULT 'app'")
-    except Exception:
-        pass
+    # Auto-migration safety: ensure each column addition is isolated in its own try/except
+    alter_statements = [
+        "ALTER TABLE agent_runs ADD COLUMN mode TEXT DEFAULT 'fallback'",
+        "ALTER TABLE agent_runs ADD COLUMN tokens_prompt INTEGER DEFAULT 0",
+        "ALTER TABLE agent_runs ADD COLUMN tokens_completion INTEGER DEFAULT 0",
+        "ALTER TABLE agent_runs ADD COLUMN cost_usd REAL DEFAULT 0.0",
+        "ALTER TABLE crawl_pages ADD COLUMN inlinks_count INTEGER DEFAULT 0",
+        "ALTER TABLE crawl_pages ADD COLUMN headings_json TEXT DEFAULT '[]'",
+        "ALTER TABLE crawl_pages ADD COLUMN text_terms TEXT DEFAULT '[]'",
+        "ALTER TABLE crawl_pages ADD COLUMN body_text TEXT DEFAULT ''",
+        "ALTER TABLE jobs ADD COLUMN in_sitemap_not_crawled INTEGER DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN crawled_not_in_sitemap INTEGER DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN sitemap_found INTEGER DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN sitemap_status TEXT DEFAULT 'pending'",
+        "ALTER TABLE jobs ADD COLUMN psi_status TEXT DEFAULT 'pending'",
+        "ALTER TABLE jobs ADD COLUMN is_demo INTEGER DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN competitor_domains TEXT DEFAULT '[]'",
+        "ALTER TABLE jobs ADD COLUMN failed_fetches_json TEXT DEFAULT '[]'",
+        "ALTER TABLE jobs ADD COLUMN crawl_incomplete INTEGER DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN platform TEXT DEFAULT 'unknown'",
+        "ALTER TABLE jobs ADD COLUMN platform_confidence REAL DEFAULT 0.0",
+        "ALTER TABLE jobs ADD COLUMN detected_platform TEXT DEFAULT 'unknown'",
+        "ALTER TABLE jobs ADD COLUMN detected_platform_confidence REAL DEFAULT 0.0",
+        "ALTER TABLE jobs ADD COLUMN router_type TEXT DEFAULT 'app'",
+        "ALTER TABLE jobs ADD COLUMN dropped_pages_json TEXT DEFAULT '[]'",
+        "ALTER TABLE jobs ADD COLUMN incomplete_reasons_json TEXT DEFAULT '[]'",
+        "ALTER TABLE jobs ADD COLUMN completeness_status TEXT DEFAULT 'complete'",
+        "ALTER TABLE jobs ADD COLUMN sitemap_entries_json TEXT DEFAULT '[]'",
+        "ALTER TABLE projects ADD COLUMN platform_confidence REAL DEFAULT 0.0",
+    ]
+    for stmt in alter_statements:
+        try:
+            cursor.execute(stmt)
+        except Exception:
+            pass
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS code_outputs (
             id TEXT PRIMARY KEY,
