@@ -125,15 +125,25 @@ def detect_issues_from_data(
 
         # Broken links (4xx) and Server errors (5xx)
         if 400 <= status < 500:
-            closest = find_closest_slug(url, pages_200_urls) if url else None
-            cand = {
-                "type": "broken_link_4xx",
-                "urls": [url],
-                "evidence": [{"table": "crawl_pages", "id": pid, "field": "status_code", "value": status}],
-            }
-            if closest:
-                cand["did_you_mean"] = closest
-            candidates.append(cand)
+            if status in (403, 429):
+                candidates.append({
+                    "type": "blocked_by_server",
+                    "urls": [url],
+                    "severity": "medium",
+                    "impact": f"Page access returned HTTP {status} (restricted or rate-limited by server).",
+                    "fix_hint": "Verify crawler user-agent access permissions or security firewall rules.",
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "status_code", "value": status}],
+                })
+            elif "/cdn-cgi/" not in url:
+                closest = find_closest_slug(url, pages_200_urls) if url else None
+                cand = {
+                    "type": "broken_link_4xx",
+                    "urls": [url],
+                    "evidence": [{"table": "crawl_pages", "id": pid, "field": "status_code", "value": status}],
+                }
+                if closest:
+                    cand["did_you_mean"] = closest
+                candidates.append(cand)
         elif status >= 500:
             candidates.append({
                 "type": "server_error_5xx",
@@ -407,8 +417,7 @@ def detect_issues_from_data(
                             "evidence": [{"table": "crawl_pages", "id": pid, "field": "canonical", "value": f"URL {url} vs canonical {canonical}"}],
                         })
 
-            # Trailing slash redirect / canonical hygiene
-            if canonical and url:
+                # Trailing slash redirect / canonical hygiene
                 u_p = urlparse(url)
                 c_p = urlparse(canonical)
                 if u_p.path and c_p.path and u_p.path != "/" and c_p.path != "/":
@@ -416,6 +425,9 @@ def detect_issues_from_data(
                         candidates.append({
                             "type": "trailing_slash_inconsistency",
                             "urls": [url],
+                            "severity": "low",
+                            "impact": f"Page URL '{url}' and its canonical '{canonical}' have conflicting trailing slashes, confusing search engine canonicalization.",
+                            "fix_hint": "Align URL structure and canonical tag to either include or exclude the trailing slash consistently.",
                             "evidence": [{"table": "crawl_pages", "id": pid, "field": "canonical", "value": f"URL {url} and canonical {canonical} have mismatched trailing slash"}],
                         })
 
@@ -546,6 +558,39 @@ def detect_issues_from_data(
                 "group_key": m_text,
                 "evidence": [{"table": "crawl_pages", "id": p.get("id"), "field": "meta_desc", "value": p.get("meta_desc")} for p in plist],
             })
+
+    # Trailing slash inconsistency (derived from internal link form vs final served URL)
+    crawled_url_map = {p["url"].rstrip("/").lower(): p["url"] for p in crawl_pages if p.get("status_code") == 200}
+    trailing_slash_issues: Dict[str, Dict[str, Any]] = {}
+    for link in crawl_links:
+        src = link.get("source_url", "")
+        tgt = link.get("target_url", "")
+        if not tgt:
+            continue
+        tgt_norm = tgt.rstrip("/").lower()
+        if tgt_norm in crawled_url_map:
+            served = crawled_url_map[tgt_norm]
+            tgt_path = urlparse(tgt).path
+            served_path = urlparse(served).path
+            if tgt_path and served_path and tgt_path != "/" and served_path != "/":
+                if tgt_path.endswith("/") != served_path.endswith("/"):
+                    if tgt not in trailing_slash_issues:
+                        trailing_slash_issues[tgt] = {
+                            "type": "trailing_slash_inconsistency",
+                            "urls": [tgt],
+                            "severity": "low",
+                            "impact": f"Internal link on {src} targets '{tgt}' ({'with' if tgt_path.endswith('/') else 'without'} trailing slash), but page is served at '{served}' ({'with' if served_path.endswith('/') else 'without'} trailing slash), triggering unnecessary redirects.",
+                            "fix_hint": f"Update internal link on {src} to match final served URL '{served}'.",
+                            "evidence": [{
+                                "table": "crawl_links",
+                                "source_url": src,
+                                "target_url": tgt,
+                                "served_url": served,
+                                "value": f"Internal link form '{tgt}' vs final served URL '{served}'"
+                            }]
+                        }
+    for iss in trailing_slash_issues.values():
+        candidates.append(iss)
 
     # 2. PageSpeed Insights Rules
     speed_issues_found = False

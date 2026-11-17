@@ -200,10 +200,22 @@ def parse_html_page(
     outlinks_list: List[str] = []
     links_with_anchors: List[Dict[str, str]] = []
 
+    IGNORED_LINK_PATTERNS = [
+        re.compile(r"[?&](?:p|page_id|replytocom)=\d+", re.IGNORECASE),
+        re.compile(r"/(?:wp-json|feed|cdn-cgi)(?:/|$)", re.IGNORECASE),
+    ]
+
     for a in soup.find_all("a", href=True):
-        href = a.get("href")
+        href = (a.get("href") or "").strip()
+        rel_attr = a.get("rel")
+        rel_str = " ".join(rel_attr).lower() if isinstance(rel_attr, list) else str(rel_attr or "").lower()
+        if "shortlink" in rel_str:
+            continue
+        if any(pat.search(href) for pat in IGNORED_LINK_PATTERNS):
+            continue
+
         anchor = re.sub(r"\s+", " ", a.get_text(separator=" ", strip=True)).strip()
-        normalized = normalize_url(href, base_url=current_url)
+        normalized = normalize_url(href, base_url=current_url, trailing_slash=None)
         if normalized:
             if normalized not in outlinks_list:
                 outlinks_list.append(normalized)

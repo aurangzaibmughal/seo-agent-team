@@ -448,6 +448,21 @@ async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, projec
         })
 
         verified_strat_tasks = strat_ver_report.verified_tasks
+
+        # Fallback Guard (P0-1): If verifier left 0 tasks but we have verified issues/findings,
+        # fallback to deterministic strategy tasks immediately so the 30-day plan is never empty.
+        if not verified_strat_tasks and (verified_tech_issues or verified_perf_findings or verified_research_opps):
+            print("[Strategist] Strategy tasks empty. Triggering deterministic fallback...")
+            det_report = StrategistAgent._run_deterministic(verified_tech_issues, verified_perf_findings, verified_research_opps)
+            StrategistAgent._compute_priority_scores_and_sort(det_report)
+            det_ver_report = Verifier.verify_strategy_tasks(
+                tasks=det_report.tasks,
+                verified_source_ids=verified_source_ids,
+                rejected_source_ids=rejected_source_ids
+            )
+            verified_strat_tasks = det_ver_report.verified_tasks or det_report.tasks
+            strat_report = det_report
+
         DBManager.save_strategy_plan(job_id, {
             "tasks": [t.model_dump() for t in verified_strat_tasks],
             "summary": strat_report.summary
@@ -528,8 +543,30 @@ async def run_full_pipeline(job_id: str, target_url: str, max_pages: int, projec
         try:
             # Re-fetch latest job to check for detected platform or user override
             job = DBManager.get_job(job_id) or job
-            platform = job.get("platform") or job.get("detected_platform") or "plain_html"
-            if platform not in ("nextjs", "wordpress", "shopify", "plain_html"):
+            detected_p = job.get("detected_platform")
+            platform = job.get("platform")
+            if (not platform or platform in ("unknown", "plain_html")) and detected_p and detected_p not in ("unknown", "plain_html"):
+                platform = detected_p
+
+            if not platform or platform in ("unknown", "plain_html"):
+                # Check discovered links and URLs for CMS paths
+                for lk in crawl_links:
+                    tu = (lk.get("target_url") or "").lower()
+                    if "/wp-content/" in tu or "/wp-includes/" in tu or "/wp-json/" in tu or "wp-travel-engine" in tu:
+                        platform = "wordpress"
+                        break
+                    if "cdn.shopify.com" in tu or "myshopify.com" in tu:
+                        platform = "shopify"
+                        break
+                if platform != "plain_html" and platform != "unknown":
+                    DBManager.update_job(job_id, {
+                        "platform": platform,
+                        "platform_confidence": 0.95,
+                        "detected_platform": platform,
+                        "detected_platform_confidence": 0.95
+                    })
+
+            if not platform or platform not in ("nextjs", "wordpress", "shopify", "plain_html"):
                 platform = "plain_html"
             platform_confidence = float(job.get("platform_confidence") or job.get("detected_platform_confidence") or 1.0)
             router_type = job.get("router_type") or "app"

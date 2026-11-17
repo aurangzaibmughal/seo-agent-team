@@ -12,6 +12,7 @@ from reportlab.lib import colors
 from urllib.parse import urlparse
 from app.core.classification import classify_page_type
 from app.core.db import DBManager
+from app.crawler.url_utils import urls_compare_equal
 
 EXPORTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "exports")
 os.makedirs(EXPORTS_DIR, exist_ok=True)
@@ -23,7 +24,7 @@ class ReportExporter:
         job_id: str,
         items: List[Dict[str, Any]],
         item_type: str,
-        include_unreviewed: bool = False
+        include_unreviewed: bool = True
     ) -> List[Dict[str, Any]]:
         from app.core.db import DBManager
         reviews = DBManager.get_review_items(job_id, item_type=item_type)
@@ -71,11 +72,23 @@ class ReportExporter:
         code_data: Optional[Dict[str, Any]] = None,
         is_demo: bool = False,
         agency_name: Optional[str] = None,
-        include_unreviewed: bool = False,
+        include_unreviewed: bool = True,
         crawl_pages: Optional[List[Dict[str, Any]]] = None,
         strict_lint_gate: bool = False,
         **kwargs
     ) -> str:
+        job_info = DBManager.get_job(job_id) or {}
+
+        if not strategy_data:
+            st = DBManager.get_strategy_plan(job_id)
+            if st and st.get("plan"):
+                strategy_data = st["plan"]
+
+        if not code_data:
+            cd = DBManager.get_code_output(job_id)
+            if cd and cd.get("code"):
+                code_data = cd["code"]
+
         # Filter items based on review status
         verified_issues = cls.filter_by_review(job_id, verified_issues, "technical_issue", include_unreviewed)
         if content_data and "rewrites" in content_data:
@@ -141,6 +154,8 @@ class ReportExporter:
             print(f"[Report-Time Linter Gate] {len(qa_warnings)} QA warning(s) detected for job {job_id}:")
             for w in qa_warnings:
                 print(f"  - {w}")
+            # Invariant: job status must be "partial", never "complete" when QA warnings are present
+            DBManager.update_job(job_id, {"status": "partial"})
             if strict_lint_gate:
                 raise ReportLintGateError(qa_warnings)
 
@@ -202,6 +217,19 @@ class ReportExporter:
         ]))
         story.append(inc_banner)
         story.append(Spacer(1, 8))
+
+        # Report Quality Notes Banner (A-16 & P0-3)
+        if qa_warnings:
+            qa_notes_text = f"<b>⚠️ Report Quality Notes ({len(qa_warnings)} item(s)):</b><br/>• " + "<br/>• ".join(qa_warnings)
+            qa_banner = Table([[Paragraph(qa_notes_text, body_style)]], colWidths=[540])
+            qa_banner.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fee2e2')),
+                ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#991b1b')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#ef4444')),
+                ('PADDING', (0, 0), (-1, -1), 6),
+            ]))
+            story.append(qa_banner)
+            story.append(Spacer(1, 8))
 
         # Title
         story.append(Paragraph("Executive SEO & Action Plan Report", title_style))
@@ -397,7 +425,7 @@ class ReportExporter:
 
         if psi_data and any(p.get("performance_score") is not None for p in psi_data):
             tested_urls = set(p.get("url") for p in psi_data if p.get("url"))
-            total_crawl_count = len(crawl_pages) if crawl_pages else len(tested_urls)
+            total_crawl_count = job_info.get("pages_crawled") or (len(crawl_pages) if crawl_pages else len(tested_urls))
             disclosure_text = (
                 f"<i>Tested {len(tested_urls)} of {total_crawl_count} crawled pages (sampled top pages by internal inlinks). "
                 f"Metrics are simulated lab data (Lighthouse) under standardized mobile/desktop throttling, strictly separated from field user data (Chrome UX Report / CrUX).</i>"
@@ -406,7 +434,7 @@ class ReportExporter:
             story.append(Spacer(1, 4))
 
             psi_rows = [["URL", "Device", "Score [lab data (Lighthouse)]", "LCP", "CLS", "FCP", "TTFB"]]
-            for p in psi_data[:8]:
+            for p in psi_data:
                 sc = str(p.get("performance_score")) if p.get("performance_score") is not None else "N/A"
                 lcp = f"{p.get('lcp_ms')} ms" if p.get("lcp_ms") is not None else "N/A"
                 cls_v = str(p.get("cls")) if p.get("cls") is not None else "N/A"
@@ -418,8 +446,22 @@ class ReportExporter:
                 is_cached = bool(p.get("is_cached"))
                 m_time = (p.get("cached_measured_at") if is_cached else None) or p.get("fetched_at") or p.get("measured_at") or ""
                 clean_time = m_time[:19].replace("T", " ") if m_time else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-                cache_status = "cached" if is_cached else "fresh"
-                dev_str = f"{dev_str}<br/><font size='5.5' color='#64748b'>({cache_status}, measured at {clean_time})</font>"
+                age_str = ""
+                if is_cached and m_time:
+                    try:
+                        m_dt = datetime.fromisoformat(m_time.replace("Z", "+00:00"))
+                        diff_sec = max(0, int((datetime.now(timezone.utc) - m_dt).total_seconds()))
+                        if diff_sec < 60:
+                            age_str = f" ({diff_sec}s old)"
+                        elif diff_sec < 3600:
+                            age_str = f" ({diff_sec // 60}m old)"
+                        else:
+                            age_str = f" ({diff_sec // 3600}h old)"
+                    except Exception:
+                        pass
+                cache_status = f"cached{age_str}" if is_cached else "fresh"
+                n_runs = p.get("runs_count") or 3
+                dev_str = f"{dev_str}<br/><font size='5.5' color='#64748b'>({cache_status}, measured at {clean_time}, median of {n_runs} runs)</font>"
 
                 psi_rows.append([
                     Paragraph(html.escape(p.get("url", "")), body_style),
@@ -603,7 +645,7 @@ class ReportExporter:
         verifier = code_data.get("verifier", {}) if code_data else {}
         artifacts = bundle.get("artifacts", [])
         fix_coverage = bundle.get("fix_coverage", [])
-        platform = bundle.get("platform", "plain_html")
+        platform = bundle.get("platform") or job_info.get("platform") or "plain_html"
 
         if len(artifacts) > 0:
             story.append(Paragraph("<i>Code fixes generated deterministically via Jinja2 templates. Download full bundle as ZIP via API/UI.</i>", meta_style))
@@ -673,7 +715,7 @@ class ReportExporter:
                 sc = str(p.get("status_code", 200))
                 t_len = f"{len(p.get('title') or '')} chars"
                 m_len = f"{len(p.get('meta_desc') or '')} chars"
-                can = "Self" if p.get("canonical") == u else ("Missing" if not p.get("canonical") else "Other")
+                can = "Self" if urls_compare_equal(p.get("canonical"), u) else ("Missing" if not p.get("canonical") else "Other")
                 idx = "Yes" if p.get("indexable") else "No"
                 inv_rows.append([
                     Paragraph(html.escape(u), body_style),

@@ -39,10 +39,14 @@ class PlatformDetector:
         if "wordpress" in x_powered_by:
             self.wordpress_signals += 5
             self.evidence.append(f"Header x-powered-by: {x_powered_by}")
-        wp_gen_match = re.search(r'<meta[^>]+name=["\']generator["\'][^>]+content=["\']([^"\']*wordpress[^"\']*)["\']', html_lower)
-        if wp_gen_match:
+
+        # Meta generator check (attribute-order insensitive)
+        wp_gen = re.search(r'<meta[^>]+(?:name=["\']generator["\'][^>]+content=["\']([^"\']*wordpress[^"\']*)["\']|content=["\']([^"\']*wordpress[^"\']*)["\'][^>]+name=["\']generator["\'])', html_lower)
+        if wp_gen:
+            gen_val = wp_gen.group(1) or wp_gen.group(2) or "wordpress"
             self.wordpress_signals += 5
-            self.evidence.append(f"Meta generator WordPress: {wp_gen_match.group(1)}")
+            self.evidence.append(f"Meta generator WordPress: {gen_val}")
+
         if "/wp-content/" in html_lower or "/wp-includes/" in html_lower:
             self.wordpress_signals += 3
             self.evidence.append("WordPress asset paths (/wp-content/ or /wp-includes/)")
@@ -50,16 +54,23 @@ class PlatformDetector:
             self.wordpress_signals += 2
             self.evidence.append("WordPress REST API link (/wp-json/)")
 
-        # Elementor subframework detection
-        elem_gen_match = re.search(r'<meta[^>]+name=["\']generator["\'][^>]+content=["\']([^"\']*elementor[^"\']*)["\']', html_lower)
-        if elem_gen_match:
+        # Elementor subframework detection (attribute-order insensitive)
+        elem_gen = re.search(r'<meta[^>]+(?:name=["\']generator["\'][^>]+content=["\']([^"\']*elementor[^"\']*)["\']|content=["\']([^"\']*elementor[^"\']*)["\'][^>]+name=["\']generator["\'])', html_lower)
+        if elem_gen:
+            gen_val = elem_gen.group(1) or elem_gen.group(2) or "elementor"
             self.wordpress_signals += 5
             self.detected_subframework = "elementor"
-            self.evidence.append(f"Meta generator Elementor: {elem_gen_match.group(1)}")
+            self.evidence.append(f"Meta generator Elementor: {gen_val}")
+
         if "/wp-content/plugins/elementor" in html_lower or "elementor-frontend-js" in html_lower or "elementor-kit-" in html_lower:
             self.wordpress_signals += 3
             self.detected_subframework = "elementor"
             self.evidence.append("Elementor plugin assets and CSS class markers")
+
+        # WP Travel Engine detection
+        if "wp-travel-engine" in html_lower or "/wp-travel-engine" in html_lower:
+            self.wordpress_signals += 5
+            self.evidence.append("WP Travel Engine plugin paths or markers")
 
         # 3. Shopify detection
         if "cdn.shopify.com" in html_lower or "shopify.theme" in html_lower:
@@ -68,6 +79,21 @@ class PlatformDetector:
         if "myshopify.com" in html_lower or "x-shopid" in headers_lower:
             self.shopify_signals += 4
             self.evidence.append("Shopify store domain / x-shopid header")
+
+    def analyze_url(self, url: str):
+        """Analyzes discovered URL paths for CMS signatures."""
+        if not url:
+            return
+        u_lower = url.lower()
+        if "/wp-content/" in u_lower or "/wp-includes/" in u_lower:
+            self.wordpress_signals += 3
+            self.evidence.append(f"WordPress URL path: {url}")
+        if "/wp-json/" in u_lower or "wp-travel-engine" in u_lower:
+            self.wordpress_signals += 3
+            self.evidence.append(f"WordPress plugin/API URL path: {url}")
+        if "cdn.shopify.com" in u_lower or "myshopify.com" in u_lower:
+            self.shopify_signals += 4
+            self.evidence.append(f"Shopify URL: {url}")
 
     def detect(self) -> Tuple[str, float]:
         """Returns (detected_platform, confidence)."""

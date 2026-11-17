@@ -359,6 +359,9 @@ async def export_report_file(job_id: str, format_type: str):
     res = DBManager.get_research_snapshot(job_id)
     res_data = res.get("snapshot") if res else None
 
+    code_rec = DBManager.get_code_output(job_id)
+    code_data = code_rec.get("code") if code_rec else None
+
     psi_results = DBManager.get_psi_results(job_id)
 
     try:
@@ -366,6 +369,7 @@ async def export_report_file(job_id: str, format_type: str):
             path = ReportExporter.generate_pdf(
                 job_id, job["target_url"], v_issues, p_data,
                 strategy_data=strat_data, content_data=cont_data, research_data=res_data,
+                code_data=code_data,
                 psi_data=psi_results, is_demo=is_demo
             )
             media_type = "application/pdf"
@@ -373,6 +377,7 @@ async def export_report_file(job_id: str, format_type: str):
             path = ReportExporter.generate_csv(
                 job_id, v_issues, p_data,
                 strategy_data=strat_data, content_data=cont_data, research_data=res_data,
+                code_data=code_data,
                 psi_data=psi_results, is_demo=is_demo
             )
             media_type = "text/csv"
@@ -380,6 +385,7 @@ async def export_report_file(job_id: str, format_type: str):
             path = ReportExporter.generate_xlsx(
                 job_id, job["target_url"], v_issues, p_data,
                 strategy_data=strat_data, content_data=cont_data, research_data=res_data,
+                code_data=code_data,
                 psi_data=psi_results, is_demo=is_demo
             )
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -388,6 +394,7 @@ async def export_report_file(job_id: str, format_type: str):
         path = ReportExporter.generate_pdf(
             job_id, job["target_url"], v_issues, p_data,
             strategy_data=strat_data, content_data=cont_data, research_data=res_data,
+            code_data=code_data,
             psi_data=psi_results, is_demo=is_demo, strict_lint_gate=False
         )
         media_type = "application/pdf"

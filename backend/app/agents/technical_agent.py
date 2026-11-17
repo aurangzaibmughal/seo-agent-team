@@ -198,6 +198,12 @@ ISSUE_METADATA = {
         "effort": "low",
         "impact": "Brand name is repeated 2 or more times in the title tag, creating redundant snippets in search results.",
         "fix_hint": "If the layout adds a brand suffix via a title template, remove the brand from this page's own title."
+    },
+    "trailing_slash_inconsistency": {
+        "severity": "low",
+        "effort": "low",
+        "impact": "Internal link form differs from final served URL trailing slash convention, triggering unnecessary redirect hops.",
+        "fix_hint": "Update internal links to match the site's canonical trailing slash structure."
     }
 }
 
@@ -245,6 +251,7 @@ DETERMINISTIC_SEVERITY_TABLE: Dict[str, str] = {
     "sitemap_unreadable": "medium",
     "crawled_page_missing_from_sitemap": "medium",
     "missing_robots_txt": "medium",
+    "blocked_by_server": "medium",
 
     # Low base severity
     "cls_needs_improvement": "low",
@@ -364,8 +371,8 @@ class TechnicalAgent:
                     "type": itype,
                     "severity": meta["severity"],
                     "effort": meta["effort"],
-                    "impact": meta["impact"],
-                    "fix_hint": meta["fix_hint"],
+                    "impact": c.get("impact") or meta["impact"],
+                    "fix_hint": c.get("fix_hint") or meta["fix_hint"],
                     "urls": set(),
                     "evidence": [],
                     "candidate_ids": set()

@@ -937,8 +937,8 @@ class DBManager:
 
     # PSI methods
     @staticmethod
-    def get_psi_cached(url: str, strategy: str) -> Optional[Dict[str, Any]]:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    def get_psi_cached(url: str, strategy: str, max_age_hours: int = 1) -> Optional[Dict[str, Any]]:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
         conn = get_sqlite_conn()
         cursor = conn.cursor()
         cursor.execute("""
