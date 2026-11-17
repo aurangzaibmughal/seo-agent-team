@@ -1,8 +1,6 @@
 import os
 import re
 import json
-import socket
-import asyncio
 import threading
 from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -11,11 +9,11 @@ from unittest.mock import patch
 import pytest
 import pypdf
 
-from app.core.db import DBManager, get_sqlite_conn
+from app.core.db import DBManager
 from app.core.config import settings
 from app.agents.orchestrator import run_full_pipeline
 from app.services.reporter import ReportExporter
-from app.services.report_linter import lint_audit_report, ReportLintGateError
+from app.services.report_linter import lint_audit_report
 from app.crawler.url_utils import canonical_url_key
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "alghaffar_real")

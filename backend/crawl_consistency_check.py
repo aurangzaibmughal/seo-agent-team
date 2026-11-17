@@ -1,5 +1,4 @@
 import asyncio
-import json
 from app.crawler.engine import AsyncCrawler
 
 async def run_crawl(crawl_id: str, max_pages: int = 30):
