@@ -85,6 +85,8 @@ class AsyncCrawler:
         self.to_visit: asyncio.Queue[tuple[str, str]] = asyncio.Queue()  # (url, referring_url)
         self.semaphore = asyncio.Semaphore(settings.CRAWL_CONCURRENCY)
         self.crawled_count = 0
+        self.total_attempts = 0
+        self.max_attempts = max(self.max_pages, 30) * 2
         self.active_workers = 0
         self.discovered_links: List[Dict[str, str]] = []
         self.sitemap_urls: Set[str] = set()
@@ -127,7 +129,10 @@ class AsyncCrawler:
                 ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg",
                 ".css", ".js", ".ico"
             )
+            seeded_sitemap_count = 0
             for sm_url in sorted(self.sitemap_urls):
+                if seeded_sitemap_count >= self.max_pages:
+                    break
                 norm_sm = normalize_url(sm_url, base_url=self.start_url, trailing_slash=None)
                 sm_key = canonical_url_key(norm_sm) if norm_sm else None
                 if norm_sm and sm_key and sm_key not in self.visited_keys:
@@ -136,11 +141,12 @@ class AsyncCrawler:
                         await self.to_visit.put((norm_sm, "sitemap.xml"))
                         self.visited.add(norm_sm)
                         self.visited_keys.add(sm_key)
+                        seeded_sitemap_count += 1
 
             # 2. Run crawl workers
             workers = [asyncio.create_task(self._worker(client)) for _ in range(settings.CRAWL_CONCURRENCY)]
 
-            while self.crawled_count < self.max_pages:
+            while self.crawled_count < self.max_pages and self.total_attempts < self.max_attempts:
                 if self.to_visit._unfinished_tasks == 0:
                     break
                 await asyncio.sleep(0.05)
@@ -154,6 +160,8 @@ class AsyncCrawler:
             crawl_pages_db = DBManager.get_crawl_pages(self.job_id)
             crawled_status_map = {p["url"].rstrip("/"): p.get("status_code", 200) for p in crawl_pages_db}
 
+            MAX_SITEMAP_PROBES = 50
+            probed_count = 0
             for sm_url in sorted(self.sitemap_urls):
                 norm_sm = sm_url.rstrip("/")
                 if norm_sm in crawled_status_map:
@@ -162,15 +170,22 @@ class AsyncCrawler:
                         "status_code": crawled_status_map[norm_sm],
                         "in_crawl": True
                     })
-                else:
+                elif probed_count < MAX_SITEMAP_PROBES:
                     try:
-                        probe_resp = await safe_fetch_url(client, sm_url, timeout=10.0)
+                        probe_resp = await safe_fetch_url(client, sm_url, timeout=5.0)
                         probe_code = probe_resp.status_code
                     except Exception:
                         probe_code = 0  # not crawlable / network error
                     sitemap_entries.append({
                         "url": sm_url,
                         "status_code": probe_code,
+                        "in_crawl": False
+                    })
+                    probed_count += 1
+                else:
+                    sitemap_entries.append({
+                        "url": sm_url,
+                        "status_code": 0,
                         "in_crawl": False
                     })
 
@@ -256,7 +271,7 @@ class AsyncCrawler:
         DBManager.update_job(self.job_id, job_update)
 
     async def _worker(self, client: httpx.AsyncClient):
-        while self.crawled_count < self.max_pages:
+        while self.crawled_count < self.max_pages and self.total_attempts < self.max_attempts:
             try:
                 item = await asyncio.wait_for(self.to_visit.get(), timeout=1.0)
                 url, referrer = item if isinstance(item, tuple) else (item, "")
@@ -325,8 +340,9 @@ class AsyncCrawler:
         return status_code, html, content_type, redirect_url, headers_dict, elapsed_ms, error_reason
 
     async def _crawl_page(self, client: httpx.AsyncClient, url: str, referrer: str = ""):
-        if self.crawled_count >= self.max_pages:
+        if self.crawled_count >= self.max_pages or self.total_attempts >= self.max_attempts:
             return
+        self.total_attempts += 1
 
         status_code, html, content_type, redirect_url, headers_dict, elapsed_ms, error_reason = \
             await self._fetch_once(client, url)
