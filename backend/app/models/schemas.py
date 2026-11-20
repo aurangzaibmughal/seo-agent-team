@@ -1,7 +1,6 @@
-from pydantic import BaseModel, HttpUrl, Field
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field
+from typing import Optional, List
 from datetime import datetime
-from uuid import UUID
 
 class JobCreate(BaseModel):
     url: str = Field(..., description="Target website URL to crawl and audit")

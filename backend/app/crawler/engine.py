@@ -1,14 +1,17 @@
 import asyncio
+import re
 import json
 import time
 import xml.etree.ElementTree as ET
-from typing import Set, List, Dict, Optional
+from typing import Set, List, Dict, Any
 from urllib.parse import urlparse
 import httpx
 
 from app.core.config import settings
 from app.core.db import DBManager
 from app.crawler.parser import normalize_url, is_internal_url, parse_html_page
+from app.crawler.url_utils import canonical_url_key, urls_compare_equal
+from app.crawler.sitemap_parser import discover_and_parse_sitemaps, SitemapDiscoveryResult
 from app.crawler.detector import PlatformDetector
 from app.core.security import validate_safe_url, safe_fetch_url, SSRFSecurityError
 
@@ -76,16 +79,18 @@ class AsyncCrawler:
         validate_safe_url(self.start_url)
         self.target_domain = urlparse(self.start_url).netloc
         self.max_pages = min(max_pages, settings.MAX_CRAWL_PAGES)
-        
+
         self.visited: Set[str] = set()
-        self.to_visit: asyncio.Queue[str] = asyncio.Queue()
+        self.visited_keys: Set[str] = set()
+        self.to_visit: asyncio.Queue[tuple[str, str]] = asyncio.Queue()  # (url, referring_url)
         self.semaphore = asyncio.Semaphore(settings.CRAWL_CONCURRENCY)
         self.crawled_count = 0
         self.active_workers = 0
         self.discovered_links: List[Dict[str, str]] = []
         self.sitemap_urls: Set[str] = set()
-        self.failed_fetches: List[Dict] = []  # {url, reason, timestamp}
+        self.failed_fetches: List[Dict] = []  # {url, status_code, reason, referring_url, timestamp}
         self.skipped_urls: List[Dict[str, str]] = []  # {url, reason}
+        self.external_links: Set[str] = set()
         self.detector = PlatformDetector()
 
     async def run(self):
@@ -95,8 +100,9 @@ class AsyncCrawler:
             "current_step": "crawling"
         })
 
-        await self.to_visit.put(self.start_url)
+        await self.to_visit.put((self.start_url, "start_url"))
         self.visited.add(self.start_url)
+        self.visited_keys.add(canonical_url_key(self.start_url))
 
         headers = {
             "User-Agent": settings.USER_AGENT,
@@ -105,11 +111,15 @@ class AsyncCrawler:
         }
 
         async with httpx.AsyncClient(headers=headers, timeout=settings.CRAWL_TIMEOUT_SECONDS, follow_redirects=True) as client:
-            # 1. Fetch sitemap URLs concurrently
+            # 1. Fetch and discover sitemaps concurrently (A-02)
             try:
-                self.sitemap_urls = await fetch_sitemap_urls(client, self.start_url)
+                self.sitemap_discovery = await discover_and_parse_sitemaps(client, self.start_url)
+                self.sitemap_urls = self.sitemap_discovery.sitemap_urls
+                self.sitemap_status = self.sitemap_discovery.status
             except Exception:
+                self.sitemap_discovery = SitemapDiscoveryResult(status="missing")
                 self.sitemap_urls = set()
+                self.sitemap_status = "missing"
 
             # Seed discovered sitemap HTML pages into queue up to max_pages
             non_html_exts = (
@@ -118,20 +128,22 @@ class AsyncCrawler:
                 ".css", ".js", ".ico"
             )
             for sm_url in sorted(self.sitemap_urls):
-                norm_sm = normalize_url(sm_url, base_url=self.start_url)
-                if norm_sm and norm_sm not in self.visited:
+                norm_sm = normalize_url(sm_url, base_url=self.start_url, trailing_slash=None)
+                sm_key = canonical_url_key(norm_sm) if norm_sm else None
+                if norm_sm and sm_key and sm_key not in self.visited_keys:
                     path = urlparse(norm_sm).path.lower()
                     if not any(path.endswith(ext) for ext in non_html_exts):
-                        await self.to_visit.put(norm_sm)
+                        await self.to_visit.put((norm_sm, "sitemap.xml"))
                         self.visited.add(norm_sm)
+                        self.visited_keys.add(sm_key)
 
             # 2. Run crawl workers
             workers = [asyncio.create_task(self._worker(client)) for _ in range(settings.CRAWL_CONCURRENCY)]
-            
+
             while self.crawled_count < self.max_pages:
-                if self.to_visit.empty() and self.active_workers == 0:
+                if self.to_visit._unfinished_tasks == 0:
                     break
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.05)
 
             for w in workers:
                 w.cancel()
@@ -168,7 +180,6 @@ class AsyncCrawler:
             DBManager.update_inlinks_counts(self.job_id)
 
         # 4. Compare sitemap with crawled pages & previous job for completeness guard
-        crawled_urls = self.visited
         sitemap_html_urls = {
             u for u in self.sitemap_urls
             if not any(urlparse(u).path.lower().endswith(ext) for ext in (
@@ -177,19 +188,27 @@ class AsyncCrawler:
                 ".css", ".js", ".ico"
             ))
         }
-        in_sitemap_not_crawled = len(sitemap_html_urls - crawled_urls)
 
-        # Missing crawled pages: 200 OK, indexable, canonical self omitted from sitemap
-        sitemap_norm_set = {u.rstrip("/") for u in self.sitemap_urls}
+        # Compare using canonical_url_key consistently
+        sitemap_key_set = {canonical_url_key(u) for u in sitemap_html_urls}
         crawl_pages_db = DBManager.get_crawl_pages(self.job_id)
+        crawled_200_key_set = {canonical_url_key(p["url"]) for p in crawl_pages_db if p.get("status_code") == 200}
+
+        in_sitemap_not_crawled_urls = [
+            u for u in sitemap_html_urls
+            if canonical_url_key(u) not in crawled_200_key_set
+        ]
+        in_sitemap_not_crawled = len(in_sitemap_not_crawled_urls) if self.sitemap_status == "found" else 0
+
+        # Missing crawled pages using canonical_url_key: 200 OK, indexable, canonical self omitted from sitemap
         missing_from_sitemap_pages = [
             p for p in crawl_pages_db
             if p.get("status_code") == 200
             and p.get("indexable")
-            and (not p.get("canonical") or p.get("canonical", "").rstrip("/") == p.get("url", "").rstrip("/"))
-            and p.get("url", "").rstrip("/") not in sitemap_norm_set
+            and (not p.get("canonical") or urls_compare_equal(p.get("canonical", ""), p.get("url", "")))
+            and canonical_url_key(p.get("url", "")) not in sitemap_key_set
         ]
-        crawled_not_in_sitemap = len(missing_from_sitemap_pages) if self.sitemap_urls else 0
+        crawled_not_in_sitemap = len(missing_from_sitemap_pages) if self.sitemap_status == "found" else 0
 
         incomplete_reasons = []
 
@@ -216,11 +235,13 @@ class AsyncCrawler:
 
         job_update: Dict = {
             "pages_crawled": self.crawled_count,
-            "sitemap_found": 1 if len(self.sitemap_urls) > 0 else 0,
+            "sitemap_found": 1 if self.sitemap_status == "found" else 0,
+            "sitemap_status": self.sitemap_status,
             "sitemap_entries_json": json.dumps(sitemap_entries),
             "in_sitemap_not_crawled": in_sitemap_not_crawled,
             "crawled_not_in_sitemap": crawled_not_in_sitemap,
             "failed_fetches_json": json.dumps(self.failed_fetches),
+            "dropped_pages_json": json.dumps(self.skipped_urls),
             "platform": platform,
             "platform_confidence": platform_conf,
             "detected_platform": platform,
@@ -237,16 +258,20 @@ class AsyncCrawler:
     async def _worker(self, client: httpx.AsyncClient):
         while self.crawled_count < self.max_pages:
             try:
-                url = await asyncio.wait_for(self.to_visit.get(), timeout=1.0)
+                item = await asyncio.wait_for(self.to_visit.get(), timeout=1.0)
+                url, referrer = item if isinstance(item, tuple) else (item, "")
             except (asyncio.TimeoutError, asyncio.CancelledError):
-                if self.to_visit.empty() and self.active_workers == 0:
+                if self.to_visit._unfinished_tasks == 0:
                     break
                 continue
 
             self.active_workers += 1
             try:
                 async with self.semaphore:
-                    await self._crawl_page(client, url)
+                    try:
+                        await self._crawl_page(client, url, referrer)
+                    except Exception as e:
+                        print(f"[Crawler] Error crawling {url}: {e}")
             finally:
                 self.active_workers -= 1
                 self.to_visit.task_done()
@@ -299,7 +324,7 @@ class AsyncCrawler:
 
         return status_code, html, content_type, redirect_url, headers_dict, elapsed_ms, error_reason
 
-    async def _crawl_page(self, client: httpx.AsyncClient, url: str):
+    async def _crawl_page(self, client: httpx.AsyncClient, url: str, referrer: str = ""):
         if self.crawled_count >= self.max_pages:
             return
 
@@ -312,13 +337,15 @@ class AsyncCrawler:
             status_code, html, content_type, redirect_url, headers_dict, elapsed_ms, error_reason = \
                 await self._fetch_once(client, url)
             if error_reason is not None:
-                # Still failing after retry — log it
+                # Still failing after retry — log it with referrer and status code
                 self.failed_fetches.append({
                     "url": url,
+                    "status_code": status_code,
                     "reason": error_reason,
+                    "referring_url": referrer,
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 })
-                print(f"[Crawler] Failed fetch (after retry): {url} — {error_reason}")
+                print(f"[Crawler] Failed fetch (after retry): {url} [ref: {referrer}] — {error_reason}")
 
         self.detector.analyze_page(url, status_code, headers_dict, html)
 
@@ -361,20 +388,27 @@ class AsyncCrawler:
             if not any(s["url"] == url for s in self.skipped_urls):
                 self.skipped_urls.append({"url": url, "reason": reason})
 
-        # Queue discovered internal links
+        # Queue discovered internal links (failed fetches do NOT count toward crawl budget)
         if is_crawlable_html:
             for link in parsed_data["outlinks_list"]:
                 if self.crawled_count >= self.max_pages:
                     break
+                # Do not follow rel=shortlink / ?p= / ?page_id= / ?replytocom / /wp-json/ / /feed/ / /cdn-cgi/
+                if re.search(r"[?&](?:p|page_id|replytocom)=\d+", link, re.IGNORECASE) or \
+                   re.search(r"/(?:wp-json|feed|cdn-cgi)(?:/|$)", link, re.IGNORECASE):
+                    continue
+
                 if not is_internal_url(link, self.target_domain):
-                    if not any(s["url"] == link for s in self.skipped_urls):
-                        self.skipped_urls.append({"url": link, "reason": "external domain"})
+                    self.external_links.add(link)
                     continue
                 if not is_potential_html_url(link):
                     ext = urlparse(link).path.split(".")[-1].lower() if "." in urlparse(link).path else "asset"
                     if not any(s["url"] == link for s in self.skipped_urls):
                         self.skipped_urls.append({"url": link, "reason": f"non-HTML asset extension (.{ext})"})
                     continue
-                if link not in self.visited:
+                self.detector.analyze_url(link)
+                link_key = canonical_url_key(link)
+                if link and link_key and link_key not in self.visited_keys:
                     self.visited.add(link)
-                    await self.to_visit.put(link)
+                    self.visited_keys.add(link_key)
+                    await self.to_visit.put((link, url))

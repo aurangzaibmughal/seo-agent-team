@@ -112,7 +112,7 @@ def is_ip_prohibited(ip_str: str) -> bool:
 def parse_host_to_ip(hostname: str) -> Optional[ipaddress._BaseAddress]:
     """Attempts to parse hostname as standard IPv4/IPv6 or alternative numeric representations (integer, hex, octal)."""
     clean_host = hostname.strip().strip("[]").lower()
-    
+
     # 1. Standard dotted-quad or IPv6
     try:
         return ipaddress.ip_address(clean_host)
@@ -204,7 +204,7 @@ async def safe_fetch_url(
 
     while True:
         res = await client.get(current_url, follow_redirects=False, timeout=timeout)
-        
+
         # Connect-time DNS rebinding verification: check actual TCP remote address
         if isinstance(getattr(res, "extensions", None), dict):
             stream = res.extensions.get("network_stream")
@@ -286,7 +286,7 @@ def create_session_token(payload: Dict[str, Any], expires_in_seconds: int = 8640
     payload_copy["exp"] = int(time.time()) + expires_in_seconds
     raw_json = json.dumps(payload_copy, separators=(",", ":"))
     b64_data = base64.urlsafe_b64encode(raw_json.encode("utf-8")).decode("utf-8").rstrip("=")
-    
+
     secret = get_session_secret().encode("utf-8")
     sig = hmac.new(secret, b64_data.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{b64_data}.{sig}"
@@ -306,7 +306,7 @@ def verify_session_token(token: str) -> Optional[Dict[str, Any]]:
         expected_sig = hmac.new(secret, b64_data.encode("utf-8"), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected_sig):
             return None
-        
+
         pad = "=" * (-len(b64_data) % 4)
         raw_json = base64.urlsafe_b64decode((b64_data + pad).encode("utf-8")).decode("utf-8")
         payload = json.loads(raw_json)
@@ -332,11 +332,11 @@ class InMemoryRateLimiter:
         """Returns (allowed, retry_after_seconds)."""
         now = time.time()
         cutoff = now - self.window_seconds
-        
+
         # Clean expired hits
         history = self.hits.get(client_ip, [])
         valid_history = [t for t in history if t > cutoff]
-        
+
         if len(valid_history) >= self.max_requests:
             retry_after = int(valid_history[0] + self.window_seconds - now) + 1
             return False, max(retry_after, 1)

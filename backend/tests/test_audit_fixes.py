@@ -1,8 +1,6 @@
-import pytest
 from app.core.classification import classify_page_type, is_admin_page
 from app.agents.issue_rules import detect_issues_from_data
 from app.agents.content_agent import compute_internal_link_suggestions, ContentAgent
-from app.agents.verifier import Verifier
 from app.services.comparator import JobComparator
 from app.core.db import DBManager
 

@@ -67,7 +67,7 @@ flowchart TD
 
 > [!NOTE]
 > **Snapshot Date:** November 8, 2026  
-> **Target URL:** `https://webspire-agency.vercel.app/`  
+> **Target URL:** `https://demo-agency.vercel.app/`  
 > **Benchmark Jobs:**  
 > - **Job `78ecbb30` (Full Pipeline Run):** Crawled 28 URLs total (27 returning HTTP 200, 1 returning HTTP 404). Detected 7 stale sitemap URLs and 9 missing indexable pages.  
 > - **Job `8aac96bd` (Cancel/Resume Run):** Crawled 15 URLs (all 15 returning HTTP 200; job was cancelled during PageSpeed and resumed).  
@@ -82,7 +82,7 @@ flowchart TD
 - **Pipeline Execution Cost**: `$0.002036` (strictly within the `$0.25` per-job cap and `$2.00` daily cap).
 - **Generated Drop-In Code**:
   - `app/sitemap.ts` includes canonical fixes with post-fix notes.
-  - Root layout title shortened to &le; 60 characters: `"WebSpire | Pakistan's Trusted Digital & Web Agency"`.
+  - Root layout title shortened to &le; 60 characters: `"Digital Agency | Trusted Web & Digital Solutions"`.
   - Rewrite meta description trimmed from 178 characters to &le; 155 characters.
   - `llms.txt` generated conforming to specification with full URLs.
 
@@ -129,3 +129,15 @@ Per security policy, this application runs entirely on `localhost`:
 ```
 
 For detailed deployment parameters, containerization, and production secret requirements, see [DEPLOY.md](docs/DEPLOY.md).
+
+---
+
+## 7. Accuracy & Hardening Engine (Audit Gate)
+
+The platform includes rigorous accuracy gates and generic platform adapters:
+- **Zero Hallucination Verifier:** Every finding, rewrite, and strategy task requires empirical evidence before inclusion in deliverables.
+- **Generic CMS Architecture:** Automatic framework detection with tailored adapters for **WordPress / Elementor**, **Next.js**, **Shopify**, and standard HTML sites.
+- **Exact Core Web Vitals:** Strict 3-band CWV standards (Good, Needs Improvement, Poor) with Lighthouse lab-data validation.
+- **Deterministic 4-Week Strategy:** Fallback plan builder that guarantees a prioritized, phased 30-day roadmap even when external APIs (GSC, SERP) are unlinked.
+- **Report QA Gate:** Automated pre-export linter that checks metric plausibility, URL reproduction evidence, and contiguous report layout.
+

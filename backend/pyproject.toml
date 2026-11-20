@@ -1,0 +1,36 @@
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E501",  # Line length
+    "E741",  # Ambiguous variable name
+    "E701",  # Multiple statements on one line
+    "F841",  # Unused variable
+    "W291",  # Trailing whitespace
+    "W293",  # Blank line whitespace
+]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+warn_unused_ignores = false
+show_error_codes = true
+check_untyped_defs = false
+disallow_untyped_defs = false
+disable_error_code = [
+    "arg-type",
+    "call-overload",
+    "union-attr",
+    "attr-defined",
+    "assignment",
+    "var-annotated",
+    "misc",
+    "index",
+    "return-value",
+    "operator",
+    "list-item",
+    "dict-item"
+]

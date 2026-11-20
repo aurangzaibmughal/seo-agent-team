@@ -1,7 +1,6 @@
 import httpx
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Tuple
 from datetime import datetime, timezone, timedelta
-from app.services.google_auth import get_valid_access_token
 
 def calculate_gsc_periods() -> Tuple[str, str, str, str]:
     """

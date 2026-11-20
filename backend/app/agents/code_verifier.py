@@ -36,7 +36,7 @@ class CodeVerifier:
         issue_type_by_id = issue_type_by_id or {}
         for sid in artifact.source_issue_ids:
             if issue_type_by_id and sid not in issue_type_by_id:
-                return "failed", f"Artifact {artifact.file_path} claims issue ID '{sid}' which does not exist in verified issues."
+                return "failed", f"Artifact {artifact.file_path} claims issue ID '{sid}' which does not exist in confirmed issues."
             itype = issue_type_by_id.get(sid, "")
             if ("robot" in art_type.lower() or "robots" in artifact.file_path.lower()) and (itype in ("broken_link_4xx", "broken_link") or "broken" in sid.lower() or "404" in sid.lower()):
                 return "failed", f"robots.txt / robots.ts must not claim a broken-link task or issue ({sid})."
@@ -184,13 +184,13 @@ class CodeVerifier:
             if p.get("canonical") and p.get("canonical").rstrip("/") != norm:
                 return "failed", f"Sitemap URL '{u}' has conflicting canonical tag pointing to '{p.get('canonical')}'."
 
-        return "passed", f"Valid sitemap.xml with {len(urls)} verified 200 indexable canonical URLs."
+        return "passed", f"Valid sitemap.xml with {len(urls)} confirmed 200 indexable canonical URLs."
 
     @classmethod
     def _validate_robots_txt(cls, content: str, crawl_pages: List[Dict[str, Any]]) -> Tuple[str, Optional[str]]:
         # Remove comments
         lines = [line.strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("#")]
-        
+
         has_user_agent = any(l.lower().startswith("user-agent:") for l in lines)
         has_sitemap = any(l.lower().startswith("sitemap:") for l in lines)
 
@@ -227,7 +227,7 @@ class CodeVerifier:
             if u.rstrip("/") not in crawled_urls:
                 return "failed", f"llms.txt links to non-crawled or non-indexable URL: '{u}'."
 
-        return "passed", f"llms.txt conforms to Markdown spec with {len(links)} verified indexable resource links."
+        return "passed", f"llms.txt conforms to Markdown spec with {len(links)} confirmed indexable resource links."
 
     @classmethod
     def _validate_redirects(cls, artifact: GeneratedArtifact, crawl_pages: List[Dict[str, Any]]) -> Tuple[str, Optional[str]]:
@@ -268,7 +268,7 @@ class CodeVerifier:
             if page_paths_200 and src in page_paths_200:
                 return "failed", f"Redirect source '{src}' is already an existing 200 OK page."
 
-        return "passed", f"Validated {len(redirects)} redirect rules (no loops, no chains, target verified 200)."
+        return "passed", f"Validated {len(redirects)} redirect rules (no loops, no chains, target confirmed 200)."
 
     @classmethod
     def _validate_metadata_csv(cls, content: str, crawl_pages: List[Dict[str, Any]]) -> Tuple[str, Optional[str]]:
@@ -287,7 +287,7 @@ class CodeVerifier:
             if s_m and s_m != "no change needed" and len(s_m) > 155:
                 return "failed", f"suggested_meta for '{u}' is {len(s_m)} chars (> 155 limit)."
 
-        return "passed", f"Metadata CSV validated across {len(rows)} verified page rewrites."
+        return "passed", f"Metadata CSV validated across {len(rows)} validated page rewrites."
 
     @classmethod
     def _validate_html_snippet(cls, content: str) -> Tuple[str, Optional[str]]:

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional
 
 from app.core.db import DBManager
 from app.services.asana_service import AsanaService

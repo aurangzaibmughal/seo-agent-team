@@ -6,7 +6,7 @@ from app.core.db import DBManager
 from app.agents.orchestrator import run_full_pipeline
 
 async def main():
-    target_url = "https://webspire-agency.vercel.app/"
+    target_url = "https://agency-sandbox.example.com/"
     max_pages = 30
     is_demo = False
 

@@ -1,4 +1,3 @@
-import pytest
 from app.crawler.parser import normalize_url, is_internal_url, parse_html_page
 
 def test_normalize_url():

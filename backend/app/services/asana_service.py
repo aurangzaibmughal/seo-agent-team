@@ -1,15 +1,13 @@
 import os
 import io
 import csv
-import json
-import time
 import asyncio
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 import httpx
 
 from app.core.config import settings
-from app.core.db import DBManager, get_sqlite_conn
+from app.core.db import DBManager
 
 ASANA_API_BASE = "https://app.asana.com/api/1.0"
 
@@ -341,7 +339,7 @@ class AsanaService:
 
         output = io.StringIO()
         writer = csv.writer(output)
-        
+
         # Asana CSV mapping guide headers:
         # Columns mapped interactively during upload in Asana's CSV importer
         headers = [

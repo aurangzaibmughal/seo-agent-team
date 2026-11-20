@@ -5,6 +5,8 @@
 *.pem
 *.sqlite
 *.db
+*.db-shm
+*.db-wal
 oauth*.json
 credentials*.json
 *.zip

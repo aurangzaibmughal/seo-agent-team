@@ -1,7 +1,8 @@
 import re
+import json
 import difflib
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Set
-from datetime import datetime, timezone
 from collections import defaultdict
 from app.core.db import DBManager
 from app.models.agent_schemas import (
@@ -9,7 +10,7 @@ from app.models.agent_schemas import (
     MonitorFinding, MonitorVerifierReport,
     ResearchOpportunity, ResearchVerifierReport,
     StrategyTask, StrategyVerifierReport,
-    ContentAgentReport, ContentVerifierReport, ContentBrief, OnPageRewrite, InternalLinkSuggestion
+    ContentAgentReport, ContentVerifierReport, OnPageRewrite
 )
 from app.agents.content_agent import (
     extract_preserved_entities,
@@ -58,7 +59,7 @@ def extract_numbers_from_text(text: str) -> List[float]:
 def collect_all_snapshot_numbers(snapshot: Dict[str, Any]) -> Set[float]:
     """Flattens all numeric values from snapshot data for traceability verification."""
     nums = set()
-    
+
     def _walk(obj):
         if isinstance(obj, dict):
             for v in obj.values():
@@ -90,15 +91,17 @@ def collect_all_snapshot_numbers(snapshot: Dict[str, Any]) -> Set[float]:
     _walk(snapshot)
     return nums
 
-EXPLICIT_SUPERLATIVES = {
-    "best", "greatest", "fastest", "quickest", "highest", "lowest",
-    "largest", "smallest", "cheapest", "costliest", "finest", "easiest",
-    "hardest", "smartest", "strongest", "cleanest", "safest", "brightest",
-    "purest", "smoothest", "sharpest", "simplest", "richest", "poorest",
-    "leading", "premier", "unmatched", "unrivaled", "world-class",
-    "industry-leading", "market-leading", "top-rated", "best-selling",
-    "award-winning", "award-winner", "guaranteed", "certified", "#1"
-}
+def _load_superlatives() -> Set[str]:
+    cfg = Path(__file__).resolve().parent.parent / "config" / "superlatives.json"
+    if cfg.exists():
+        try:
+            with open(cfg, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+    return set()
+
+EXPLICIT_SUPERLATIVES = _load_superlatives()
 
 LIST_COUNT_NOUNS = {
     "tip", "tips", "way", "ways", "step", "steps", "question", "questions",
@@ -112,7 +115,7 @@ LIST_COUNT_NOUNS = {
 }
 
 LIST_COUNT_REGEX = re.compile(
-    r"\b([1-9]|1\d|20)\s+(?:best\s+|top\s+|essential\s+|key\s+|proven\s+|actionable\s+|effective\s+|simple\s+|easy\s+)?(?:" +
+    r"\b([1-9]|1\d|20)\s+(?:top\s+|essential\s+|key\s+|proven\s+|actionable\s+|effective\s+|simple\s+|easy\s+)?(?:" +
     "|".join(LIST_COUNT_NOUNS) + r")\b",
     re.IGNORECASE
 )
@@ -123,7 +126,7 @@ COMMON_TITLE_WORDS = {
     "over", "to", "up", "with", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "do", "does", "did", "can", "could", "shall", "should",
     "will", "would", "may", "might", "must", "how", "what", "why", "when", "where",
-    "who", "which", "guide", "tips", "ways", "strategies", "best", "top", "free",
+    "who", "which", "guide", "tips", "ways", "strategies", "top", "free",
     "ultimate", "complete", "checklist", "review", "pricing", "services", "agency",
     "solutions", "tools", "trends", "ideas", "examples", "case", "study", "studies",
     "insights", "overview", "basics", "advanced", "step", "steps", "simple", "easy",
@@ -268,7 +271,7 @@ class Verifier:
                             "severity": "medium",
                             "effort": "medium",
                             "impact": f"Detected technical SEO issue of type {ctype}.",
-                            "fix_hint": "Review and correct according to SEO best practices."
+                            "fix_hint": "Review and correct according to recommended SEO standards."
                         })
                         uncovered_grouped[ctype] = {
                             "type": ctype,
@@ -351,7 +354,7 @@ class Verifier:
                 row = pages_by_id.get(row_id)
                 if not row:
                     return False, f"Referenced row '{row_id}' in crawl_pages does not exist in database."
-                
+
                 status = row.get("status_code", 0)
                 title = row.get("title")
                 meta_desc = row.get("meta_desc")
@@ -395,12 +398,12 @@ class Verifier:
                         return False, "Claim false: Utility/private pages (login, signup, admin, cart) SHOULD be noindex; not an issue."
                 elif issue.type == "indexable_admin_page":
                     if row.get("indexability_status") in ("noindex_meta", "noindex_header"):
-                        return False, f"Claim false: Admin page is properly noindexed."
+                        return False, "Claim false: Admin page is properly noindexed."
                     if not is_admin_page(row.get("url")):
                         return False, f"Claim false: URL '{row.get('url')}' is not an admin portal."
                 elif issue.type == "indexable_private_page":
                     if row.get("indexability_status") in ("noindex_meta", "noindex_header"):
-                        return False, f"Claim false: Private page is properly noindexed."
+                        return False, "Claim false: Private page is properly noindexed."
                     if classify_page_type(row.get("url")) != "utility":
                         return False, f"Claim false: URL '{row.get('url')}' is a content page."
                 elif issue.type == "canonical_to_other":
@@ -432,7 +435,7 @@ class Verifier:
             else:
                 return False, f"Unknown evidence table '{table}'."
 
-        return True, "Verified"
+        return True, "Valid"
 
     # M3 Verifier Extension for Monitor Agent Findings
     @classmethod
@@ -495,7 +498,7 @@ class Verifier:
             stored_val = cls._lookup_field_value(snapshot, field)
             if stored_val is None:
                 return False, f"Field '{field}' does not exist in snapshot."
-            
+
             try:
                 if abs(float(val) - float(stored_val)) > 0.15:
                     return False, f"Value mismatch for field '{field}': claimed {val}, stored is {stored_val}."
@@ -521,7 +524,7 @@ class Verifier:
             if not is_traced:
                 return False, f"Untraceable number {num} written in narrative. Not found in computed metrics."
 
-        return True, "Verified"
+        return True, "Valid"
 
     @classmethod
     def _lookup_field_value(cls, data: Dict[str, Any], path: str) -> Optional[Any]:
@@ -648,7 +651,7 @@ class Verifier:
 
             # 3. Source references
             if not task.source_refs:
-                rejected.append({"id": task.id, "reason": "Task has no source_refs. Every task must cite a verified source."})
+                rejected.append({"id": task.id, "reason": "Task has no source_refs. Every task must cite a valid source."})
                 continue
 
             invalid_ref = False
@@ -659,7 +662,7 @@ class Verifier:
                     break
                 if s.id not in verified_source_ids:
                     invalid_ref = True
-                    rejected.append({"id": task.id, "reason": f"Source reference '{s.id}' was not verified or does not exist."})
+                    rejected.append({"id": task.id, "reason": f"Source reference '{s.id}' was not validated or does not exist."})
                     break
             if invalid_ref:
                 continue
@@ -774,7 +777,7 @@ class Verifier:
                 if num not in corpus_norm:
                     return False, f"Number '{num}' not found in page text or project name."
 
-            # 6. Proper Nouns: CamelCase / internal capitalization (e.g. WebSpire, Next.js, WordPress)
+            # 6. Proper Nouns: CamelCase / internal capitalization (e.g. Next.js, WordPress)
             raw_words = re.findall(r"\b[a-zA-Z0-9#\-\.]+\b", text)
             for w in raw_words:
                 clean_w = w.strip(".,;:!?\"'()[]{}")

@@ -1,17 +1,16 @@
 import asyncio
 import os
 import sys
-import json
 import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.core.db import DBManager, get_sqlite_conn
+from app.core.db import DBManager
 from app.crawler.engine import AsyncCrawler
 from app.agents.orchestrator import run_full_pipeline
 
 async def run_real_site_tasks():
-    target_url = "https://webspire-agency.vercel.app/"
+    target_url = "https://agency-sandbox.example.com/"
     print("=" * 80)
     print(f"REAL LIVE SITE EXECUTION ON: {target_url}")
     print("=" * 80)

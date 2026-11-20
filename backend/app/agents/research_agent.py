@@ -148,7 +148,7 @@ class ResearchAgent:
         model_name: str
     ) -> Tuple[ResearchAgentReport, float, int, int]:
         prompt = f"""
-        You are an elite SEO Research Agent. Analyze the following verified keyword clusters and crawl research metrics.
+        You are an elite SEO Research Agent. Analyze the following validated keyword clusters and crawl research metrics.
         Rules:
         - NEVER invent search volume, keyword difficulty, or traffic forecasts.
         - You MUST cite the exact metrics_used array for every claim from the input snapshot data.

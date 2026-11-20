@@ -1,11 +1,8 @@
-import os
 import re
-import json
 import difflib
 from urllib.parse import urlparse
 from typing import List, Dict, Any, Tuple, Optional
 
-from app.core.config import settings
 from app.models.agent_schemas import (
     TechnicalIssue, StrategyTask, OnPageRewrite, InternalLinkSuggestion,
     GeneratedArtifact, CodeBundleReport
@@ -41,7 +38,7 @@ class CodeGeneratorAgent:
         )), crawl_pages[0] if crawl_pages else {})
 
         base_url = f"{urlparse(homepage.get('url', 'https://example.com')).scheme}://{urlparse(homepage.get('url', 'https://example.com')).netloc}"
-        brand_name = (homepage.get("title") or "WebSpire").split("|")[0].split("—")[0].split("–")[0].strip()
+        brand_name = (homepage.get("title") or (urlparse(base_url).netloc.split(".")[0].title() if urlparse(base_url).netloc else "Site")).split("|")[0].split("—")[0].split("–")[0].strip() or "Site"
 
         # Map issues & tasks for provenance
         tech_map = {iss.type: iss for iss in verified_tech_issues}
@@ -150,7 +147,8 @@ class CodeGeneratorAgent:
                     "description": p_desc
                 })
 
-        site_summary = truncate_at_word_boundary(homepage.get("meta_desc") or homepage.get("h1") or "Enterprise digital agency and web engineering.", 200)
+        raw_summary = homepage.get("meta_desc") or homepage.get("h1")
+        site_summary = truncate_at_word_boundary(raw_summary, 200) if raw_summary else None
 
         # ================= BUILD ARTIFACTS BY PLATFORM =================
 
@@ -260,8 +258,8 @@ class CodeGeneratorAgent:
             home_rewrite = next((r for r in verified_rewrites if _get_rw_attr(r, "url").rstrip("/") == base_url.rstrip("/")), None)
             home_rw_title = _get_rw_attr(home_rewrite, "suggested_title")
             home_rw_meta = _get_rw_attr(home_rewrite, "suggested_meta")
-            
-            # Shortened homepage title <= 60 chars keeping descriptor (e.g. "WebSpire | Pakistan's Trusted Digital & Web Agency")
+
+            # Shortened homepage title <= 60 chars keeping descriptor
             if home_rw_title and len(home_rw_title) <= 60:
                 short_title = home_rw_title
             else:
@@ -359,7 +357,7 @@ class CodeGeneratorAgent:
                 # Rule for /portfolio: title must be "Portfolio"
                 if p_path == "/portfolio":
                     p_title = "Portfolio"
-                    p_desc = "Explore WebSpire's portfolio of custom Next.js web applications, e-commerce stores, UI/UX case studies, and enterprise digital solutions delivered for global clients."
+                    p_desc = p_crawled.get("meta_desc") or p_crawled.get("h1") or "Portfolio and case studies."
                 else:
                     is_dup_t = any(iss.type == "duplicate_title" and any(u.rstrip("/") == p_url for u in iss.urls) for iss in verified_tech_issues)
                     is_long_t = len(p_crawled.get("title", "")) > 60
@@ -482,7 +480,19 @@ class CodeGeneratorAgent:
             ))
 
         elif platform == "wordpress":
-            # 1. functions.php wp_head hook
+            # 1. FIX-INSTRUCTIONS.md
+            wp_instructions = CodeTemplateEngine.render_wordpress_instructions(is_demo=is_demo)
+            artifacts.append(GeneratedArtifact(
+                artifact_type="wordpress_instructions",
+                file_path="FIX-INSTRUCTIONS.md",
+                platform="wordpress",
+                title="WordPress SEO Implementation Guide",
+                content=wp_instructions,
+                source_issue_ids=[],
+                source_task_ids=[]
+            ))
+
+            # 2. functions.php wp_head hook
             wp_functions = CodeTemplateEngine.render_wordpress_functions_php(org_schema, is_demo=is_demo)
             artifacts.append(GeneratedArtifact(
                 artifact_type="wordpress_functions_php",
@@ -494,7 +504,7 @@ class CodeGeneratorAgent:
                 source_task_ids=schema_t_ids
             ))
 
-            # 2. .htaccess redirects
+            # 3. .htaccess redirects
             if redirect_pairs:
                 wp_htaccess = CodeTemplateEngine.render_wordpress_htaccess(redirect_pairs, is_demo=is_demo)
                 artifacts.append(GeneratedArtifact(
@@ -610,7 +620,7 @@ class CodeGeneratorAgent:
         summary = (
             f"SEO Code Generator produced {len(artifacts)} ready-to-apply files for platform '{platform}' "
             f"({len(sitemap_items)} sitemap URLs, {len(redirect_pairs)} 301 redirects, {len(verified_rewrites)} page rewrites). "
-            f"All files are provenance-tracked to verified issues and strategy tasks."
+            f"All files are provenance-tracked to validated issues and strategy tasks."
         )
 
         bundle = CodeBundleReport(

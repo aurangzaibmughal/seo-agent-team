@@ -8,18 +8,18 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "SEO Agent Team API"
     ENVIRONMENT: str = "development"
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
-    
+
     # Supabase (optional for standalone local dev, required for full cloud state)
     SUPABASE_URL: Optional[str] = None
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
     SUPABASE_ANON_KEY: Optional[str] = None
-    
+
     # Crawler Limits (Rule capped at 200)
     MAX_CRAWL_PAGES: int = 200
     CRAWL_CONCURRENCY: int = 5
     CRAWL_TIMEOUT_SECONDS: int = 15
     USER_AGENT: str = "Mozilla/5.0 (compatible; SEOAgentTeamBot/1.0; +https://seo-agent-team.local)"
-    
+
     # PageSpeed Insights API (M2)
     PSI_API_KEY: Optional[str] = None
     PSI_MAX_PAGES: int = 5
