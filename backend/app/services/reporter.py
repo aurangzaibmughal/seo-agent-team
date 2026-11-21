@@ -322,12 +322,21 @@ class ReportExporter:
                 i_id = issue.get("id", "")
                 i_type = issue.get("type", "")
                 hint = html.escape(str(issue.get("fix_hint", "")[:120]))
-                for u in issue.get("urls", []):
+                urls = issue.get("urls", [])
+                max_show = 50
+                for u in urls[:max_show]:
                     evidence_rows.append([
                         i_id,
                         i_type,
                         Paragraph(f"<font size=6.5>{html.escape(u)}</font>", body_style),
                         Paragraph(f"<font size=6.5>{hint}</font>", body_style)
+                    ])
+                if len(urls) > max_show:
+                    evidence_rows.append([
+                        i_id,
+                        i_type,
+                        Paragraph(f"<font size=6.5 color='#64748b'><i>... and {len(urls) - max_show} more URLs (see full CSV export)</i></font>", body_style),
+                        Paragraph("<font size=6.5 color='#64748b'>Full list in CSV</font>", body_style)
                     ])
             if len(evidence_rows) > 1:
                 t_ev = Table(evidence_rows, colWidths=[40, 110, 240, 150])
@@ -369,13 +378,22 @@ class ReportExporter:
                 itype = smi.get("type")
                 sev_label = smi.get("severity", "").upper()
                 label = "Stale Sitemap URL (4xx/5xx)" if itype == "sitemap_lists_non_existent_url" else "Crawled Page Missing From Sitemap"
-                for u in smi.get("urls", []):
+                urls = smi.get("urls", [])
+                max_show = 50
+                for u in urls[:max_show]:
                     action_txt = "Remove from sitemap.xml or publish live page" if itype == "sitemap_lists_non_existent_url" else "Add 200 OK indexable page to sitemap.xml"
                     sm_table_rows.append([
                         label,
                         Paragraph(html.escape(u), body_style),
                         sev_label,
                         Paragraph(action_txt, body_style)
+                    ])
+                if len(urls) > max_show:
+                    sm_table_rows.append([
+                        label,
+                        Paragraph(f"<font size=7 color='#64748b'><i>... and {len(urls) - max_show} more URLs (see CSV export)</i></font>", body_style),
+                        sev_label,
+                        Paragraph("<font size=7 color='#64748b'>See CSV for full list</font>", body_style)
                     ])
             t_sm = Table(sm_table_rows, colWidths=[130, 220, 50, 140])
             t_sm.setStyle(TableStyle([
