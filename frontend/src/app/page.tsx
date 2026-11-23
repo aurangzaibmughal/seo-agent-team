@@ -1138,6 +1138,8 @@ export default function Home() {
                   <option value={30}>30 pgs</option>
                   <option value={50}>50 pgs</option>
                   <option value={100}>100 pgs</option>
+                  <option value={200}>200 pgs</option>
+                  <option value={300}>300 pgs</option>
                 </select>
               </div>
 

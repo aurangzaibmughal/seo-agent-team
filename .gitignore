@@ -1,6 +1,8 @@
 # Environment Variables & Secrets
 .env
 .env*
+.vercel/
+**/.vercel/
 *.secret.key
 *.pem
 *.sqlite

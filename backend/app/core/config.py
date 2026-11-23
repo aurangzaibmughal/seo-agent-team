@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
     SUPABASE_ANON_KEY: Optional[str] = None
 
-    # Crawler Limits (Rule capped at 200)
-    MAX_CRAWL_PAGES: int = 200
+    # Crawler Limits (Rule capped at 300)
+    MAX_CRAWL_PAGES: int = 300
     CRAWL_CONCURRENCY: int = 5
     CRAWL_TIMEOUT_SECONDS: int = 15
     USER_AGENT: str = "Mozilla/5.0 (compatible; SEOAgentTeamBot/1.0; +https://seo-agent-team.local)"
