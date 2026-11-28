@@ -1,0 +1,4 @@
+﻿User-agent: *
+Allow: /
+
+Sitemap: https://seo-agent-team-psi.vercel.app/sitemap.xml

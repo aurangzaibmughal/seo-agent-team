@@ -1,0 +1,128 @@
+<!--
+  OG IMAGE TEMPLATE — 1200x630
+  Browser mein kholein, screenshot lein, aur og-image.png ke naam se save karein.
+  Ya https://htmlcsstoimage.com pe paste karein aur PNG download karein.
+-->
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1200px;
+    height: 630px;
+    background: #070b14;
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+  }
+  .grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(79,70,229,0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(79,70,229,0.06) 1px, transparent 1px);
+    background-size: 60px 60px;
+  }
+  .glow-1 {
+    position: absolute;
+    width: 500px;
+    height: 500px;
+    background: radial-gradient(circle, rgba(79,70,229,0.15) 0%, transparent 70%);
+    top: -100px;
+    right: -50px;
+    border-radius: 50%;
+  }
+  .glow-2 {
+    position: absolute;
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, rgba(34,211,238,0.1) 0%, transparent 70%);
+    bottom: -80px;
+    left: -50px;
+    border-radius: 50%;
+  }
+  .content {
+    position: relative;
+    z-index: 10;
+    text-align: center;
+    padding: 40px;
+  }
+  .logo {
+    width: 72px;
+    height: 72px;
+    background: linear-gradient(135deg, #4f46e5, #22d3ee);
+    border-radius: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 28px;
+    box-shadow: 0 20px 60px rgba(79,70,229,0.3);
+  }
+  .logo svg {
+    width: 40px;
+    height: 40px;
+    color: white;
+  }
+  .title {
+    font-size: 56px;
+    font-weight: 800;
+    letter-spacing: -1.5px;
+    background: linear-gradient(to right, #ffffff, #cbd5e1, #94a3b8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 12px;
+  }
+  .subtitle {
+    font-size: 28px;
+    font-weight: 600;
+    background: linear-gradient(to right, #818cf8, #22d3ee);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 24px;
+  }
+  .features {
+    font-size: 18px;
+    color: #64748b;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  .features span {
+    color: #4f46e5;
+    margin: 0 6px;
+  }
+  .accent-line {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(to right, #4f46e5, #22d3ee, #4f46e5);
+  }
+</style>
+</head>
+<body>
+  <div class="grid"></div>
+  <div class="glow-1"></div>
+  <div class="glow-2"></div>
+  <div class="content">
+    <div class="logo">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"></path>
+        <path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"></path>
+        <path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"></path>
+      </svg>
+    </div>
+    <div class="title">SEO Agent Team</div>
+    <div class="subtitle">Multi-Agent SEO Engine</div>
+    <div class="features">
+      Crawl <span>•</span> Audit <span>•</span> Strategy <span>•</span> Content <span>•</span> Code Fixes <span>•</span> Reports
+    </div>
+  </div>
+  <div class="accent-line"></div>
+</body>
+</html>
