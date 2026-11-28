@@ -465,8 +465,8 @@ def detect_issues_from_data(
                     "evidence": [{"table": "crawl_pages", "id": pid, "field": "body_text", "value": "Conflicting currency symbols detected ($ with PKR)"}],
                 })
 
-            # Canonical checks
-            if not canonical:
+            # Canonical checks (only enforce on indexable pages; noindex pages should not declare canonicals)
+            if not canonical and index_status not in ("noindex_meta", "noindex_header") and page.get("indexable") is not False:
                 candidates.append({
                     "type": "missing_canonical",
                     "urls": [url],
