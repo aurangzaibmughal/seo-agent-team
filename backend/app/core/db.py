@@ -259,6 +259,13 @@ def init_db():
         "ALTER TABLE crawl_pages ADD COLUMN headings_json TEXT DEFAULT '[]'",
         "ALTER TABLE crawl_pages ADD COLUMN text_terms TEXT DEFAULT '[]'",
         "ALTER TABLE crawl_pages ADD COLUMN body_text TEXT DEFAULT ''",
+        "ALTER TABLE crawl_pages ADD COLUMN has_schema INTEGER DEFAULT 0",
+        "ALTER TABLE crawl_pages ADD COLUMN has_og INTEGER DEFAULT 0",
+        "ALTER TABLE crawl_pages ADD COLUMN has_twitter_card INTEGER DEFAULT 0",
+        "ALTER TABLE crawl_pages ADD COLUMN has_breadcrumbs INTEGER DEFAULT 0",
+        "ALTER TABLE crawl_pages ADD COLUMN breadcrumb_trail TEXT DEFAULT '[]'",
+        "ALTER TABLE crawl_pages ADD COLUMN has_privacy_link INTEGER DEFAULT 0",
+        "ALTER TABLE crawl_pages ADD COLUMN has_terms_link INTEGER DEFAULT 0",
         "ALTER TABLE jobs ADD COLUMN in_sitemap_not_crawled INTEGER DEFAULT 0",
         "ALTER TABLE jobs ADD COLUMN crawled_not_in_sitemap INTEGER DEFAULT 0",
         "ALTER TABLE jobs ADD COLUMN sitemap_found INTEGER DEFAULT 0",
@@ -800,8 +807,10 @@ class DBManager:
             INSERT INTO crawl_pages (
                 id, job_id, url, status_code, title, meta_desc, h1, canonical,
                 word_count, links_out, inlinks_count, indexable, indexability_status, redirect_url,
-                content_type, response_time_ms, outlinks_list, headings_json, text_terms, body_text, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                content_type, response_time_ms, outlinks_list, headings_json, text_terms, body_text,
+                has_schema, has_og, has_twitter_card, has_breadcrumbs, breadcrumb_trail, has_privacy_link, has_terms_link,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             page_id,
             page_data["job_id"],
@@ -823,6 +832,13 @@ class DBManager:
             json.dumps(page_data.get("headings", [])),
             json.dumps(page_data.get("text_terms", [])),
             (page_data.get("body_text") or "")[:20000],
+            1 if page_data.get("has_schema") else 0,
+            1 if page_data.get("has_og") else 0,
+            1 if page_data.get("has_twitter_card") else 0,
+            1 if page_data.get("has_breadcrumbs") else 0,
+            json.dumps(page_data.get("breadcrumb_trail", [])),
+            1 if page_data.get("has_privacy_link") else 0,
+            1 if page_data.get("has_terms_link") else 0,
             page_data["created_at"]
         ))
         conn.commit()
@@ -907,6 +923,16 @@ class DBManager:
                 d["text_terms"] = json.loads(d.get("text_terms", "[]"))
             except Exception:
                 d["text_terms"] = []
+            d["has_schema"] = bool(d.get("has_schema"))
+            d["has_og"] = bool(d.get("has_og"))
+            d["has_twitter_card"] = bool(d.get("has_twitter_card"))
+            d["has_breadcrumbs"] = bool(d.get("has_breadcrumbs"))
+            try:
+                d["breadcrumb_trail"] = json.loads(d.get("breadcrumb_trail", "[]"))
+            except Exception:
+                d["breadcrumb_trail"] = []
+            d["has_privacy_link"] = bool(d.get("has_privacy_link"))
+            d["has_terms_link"] = bool(d.get("has_terms_link"))
             result.append(d)
         return result
 
